@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">PowerTimer</string>
+    <string name="accessibility_service_name">PowerTimer Auto Power Off</string>
+    <string name="accessibility_service_description">Dịch vụ hỗ trợ tiếp cận giúp tự động mở menu nguồn và nhấn nút tắt nguồn khi đồng hồ đếm ngược kết thúc (hoạt động không cần root trên các bản Android 11, 12, 13, 14, 15+).</string>
+    <string name="notification_channel_name">Power Timer Countdown</string>
+    <string name="notification_channel_desc">Hiển thị thông báo trạng thái đếm ngược hẹn giờ tắt máy</string>
+    <string name="timer_running_title">Đang hẹn giờ tắt máy</string>
+    <string name="action_stop">Dừng</string>
+    <string name="action_add_10m">+10 phút</string>
+</resources>

@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="1.8"
+        android:scaleY="1.8"
+        android:translateX="32.4"
+        android:translateY="32.4">
+        <!-- Power icon ring and bar -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#7C4DFF"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:pathData="M16.59,4.58C19.86,6.34 22,9.88 22,14c0,5.52 -4.48,10 -10,10S2,19.52 2,14c0,-4.12 2.14,-7.66 5.41,-9.42"/>
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#64FFDA"
+            android:strokeWidth="2.5"
+            android:strokeLineCap="round"
+            android:pathData="M12,2v10"/>
+    </group>
+</vector>
