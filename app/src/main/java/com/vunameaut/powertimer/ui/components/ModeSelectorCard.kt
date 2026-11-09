@@ -58,7 +58,8 @@ fun ModeSelectorCard(
                 .padding(16.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
