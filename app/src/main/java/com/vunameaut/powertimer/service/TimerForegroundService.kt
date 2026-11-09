@@ -15,11 +15,13 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.vunameaut.powertimer.MainActivity
 import com.vunameaut.powertimer.R
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.data.model.TimerState
+import com.vunameaut.powertimer.manager.ShakeDetector
 import com.vunameaut.powertimer.manager.ShutdownManager
 import com.vunameaut.powertimer.receiver.TimerAlarmReceiver
 import kotlinx.coroutines.CoroutineScope
@@ -39,8 +41,6 @@ class TimerForegroundService : Service() {
 
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
-        const val ACTION_PAUSE = "ACTION_PAUSE"
-        const val ACTION_RESUME = "ACTION_RESUME"
         const val ACTION_ADD_10_MIN = "ACTION_ADD_10_MIN"
 
         const val EXTRA_SECONDS = "EXTRA_SECONDS"
@@ -48,6 +48,7 @@ class TimerForegroundService : Service() {
         const val EXTRA_FADE_AUDIO = "EXTRA_FADE_AUDIO"
         const val EXTRA_DND = "EXTRA_DND"
         const val EXTRA_WARNING = "EXTRA_WARNING"
+        const val EXTRA_SHAKE = "EXTRA_SHAKE"
 
         private val _timerFlow = MutableStateFlow(TimerState())
         val timerFlow = _timerFlow.asStateFlow()
@@ -58,7 +59,8 @@ class TimerForegroundService : Service() {
             mode: ShutdownMode,
             fadeAudio: Boolean = true,
             enableDnd: Boolean = true,
-            playWarning: Boolean = true
+            playWarning: Boolean = true,
+            shakeToExtend: Boolean = true
         ) {
             val intent = Intent(context, TimerForegroundService::class.java).apply {
                 action = ACTION_START
@@ -67,6 +69,7 @@ class TimerForegroundService : Service() {
                 putExtra(EXTRA_FADE_AUDIO, fadeAudio)
                 putExtra(EXTRA_DND, enableDnd)
                 putExtra(EXTRA_WARNING, playWarning)
+                putExtra(EXTRA_SHAKE, shakeToExtend)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -93,6 +96,7 @@ class TimerForegroundService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var timerJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var shakeDetector: ShakeDetector? = null
     private lateinit var shutdownManager: ShutdownManager
     private lateinit var notificationManager: NotificationManager
 
@@ -104,12 +108,13 @@ class TimerForegroundService : Service() {
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PowerTimer:ServiceWakeLock")
-        wakeLock?.acquire(24 * 60 * 60 * 1000L) // Safe maximum
+        wakeLock?.acquire(24 * 60 * 60 * 1000L)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         timerJob?.cancel()
+        shakeDetector?.stop()
         cancelExactAlarm()
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
@@ -128,27 +133,34 @@ class TimerForegroundService : Service() {
                 val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
                 val enableDnd = intent.getBooleanExtra(EXTRA_DND, true)
                 val playWarning = intent.getBooleanExtra(EXTRA_WARNING, true)
+                val shakeToExtend = intent.getBooleanExtra(EXTRA_SHAKE, true)
 
-                startCountdown(seconds, mode, fadeAudio, enableDnd, playWarning)
+                startCountdown(seconds, mode, fadeAudio, enableDnd, playWarning, shakeToExtend)
             }
             ACTION_STOP -> {
                 stopCountdown()
             }
             ACTION_ADD_10_MIN -> {
-                val current = _timerFlow.value
-                if (current.isRunning) {
-                    val newTotal = current.totalSeconds + 600
-                    val newRemaining = current.remainingSeconds + 600
-                    _timerFlow.value = current.copy(
-                        totalSeconds = newTotal,
-                        remainingSeconds = newRemaining
-                    )
-                    scheduleExactAlarm(newRemaining, current.selectedMode)
-                    updateNotification(newRemaining, current.selectedMode)
-                }
+                handleExtendTenMinutes()
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun handleExtendTenMinutes() {
+        val current = _timerFlow.value
+        if (current.isRunning) {
+            val newTotal = current.totalSeconds + 600
+            val newRemaining = current.remainingSeconds + 600
+            _timerFlow.value = current.copy(
+                totalSeconds = newTotal,
+                remainingSeconds = newRemaining
+            )
+            scheduleExactAlarm(newRemaining, current.selectedMode)
+            updateNotification(newRemaining, current.selectedMode)
+            vibrateShortBuzz()
+            Toast.makeText(applicationContext, "Đã cộng thêm 10 phút!", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startCountdown(
@@ -156,9 +168,11 @@ class TimerForegroundService : Service() {
         mode: ShutdownMode,
         fadeAudio: Boolean,
         enableDnd: Boolean,
-        playWarning: Boolean
+        playWarning: Boolean,
+        shakeToExtend: Boolean
     ) {
         timerJob?.cancel()
+        shakeDetector?.stop()
 
         _timerFlow.value = TimerState(
             isRunning = true,
@@ -167,11 +181,19 @@ class TimerForegroundService : Service() {
             selectedMode = mode,
             fadeAudio = fadeAudio,
             turnOnDnd = enableDnd,
-            playWarningSound = playWarning
+            playWarningSound = playWarning,
+            shakeToExtend = shakeToExtend
         )
 
         startForeground(NOTIFICATION_ID, buildNotification(seconds, mode))
         scheduleExactAlarm(seconds, mode)
+
+        if (shakeToExtend) {
+            shakeDetector = ShakeDetector(this) {
+                handleExtendTenMinutes()
+            }
+            shakeDetector?.start()
+        }
 
         timerJob = serviceScope.launch {
             var remaining = seconds
@@ -185,7 +207,7 @@ class TimerForegroundService : Service() {
                     vibrateWarning()
                 }
 
-                // Cập nhật notification mỗi 5 giây hoặc khi còn dưới 1 phút
+                // Cập nhật notification định kỳ
                 if (remaining % 5L == 0L || remaining <= 60L) {
                     updateNotification(remaining, mode)
                 }
@@ -199,13 +221,14 @@ class TimerForegroundService : Service() {
 
     private fun stopCountdown() {
         timerJob?.cancel()
+        shakeDetector?.stop()
         cancelExactAlarm()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     private suspend fun onCountdownFinished(mode: ShutdownMode, fadeAudio: Boolean, enableDnd: Boolean) {
-        Log.i("TimerService", "Countdown finished. Invoking shutdown manager...")
+        Log.i("TimerService", "Countdown finished. Locking screen and stopping media...")
         shutdownManager.executeShutdown(mode, fadeAudio, enableDnd)
         stopCountdown()
     }
@@ -232,7 +255,6 @@ class TimerForegroundService : Service() {
                 alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             }
         } catch (e: SecurityException) {
-            Log.w("TimerService", "Exact alarm permission not granted, falling back to inexact alarm: ${e.message}")
             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
         }
     }
@@ -254,8 +276,7 @@ class TimerForegroundService : Service() {
     private fun vibrateWarning() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            val vibrator = vibratorManager.defaultVibrator
-            vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 200, 300), -1))
+            vibratorManager.defaultVibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 200, 300), -1))
         } else {
             @Suppress("DEPRECATION")
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -264,6 +285,22 @@ class TimerForegroundService : Service() {
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(longArrayOf(0, 300, 200, 300), -1)
+            }
+        }
+    }
+
+    private fun vibrateShortBuzz() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(100)
             }
         }
     }
@@ -318,8 +355,8 @@ class TimerForegroundService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Hẹn giờ tắt máy: $timeString")
-            .setContentText("Chế độ: ${mode.badge} • Tự động kích hoạt khi hết giờ")
+            .setContentTitle("Hẹn giờ tắt màn hình: $timeString")
+            .setContentText("Chế độ: ${mode.badge} • Lắc máy để +10 phút")
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

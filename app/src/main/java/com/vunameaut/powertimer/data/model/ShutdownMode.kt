@@ -1,55 +1,53 @@
 package com.vunameaut.powertimer.data.model
 
 /**
- * Các phương thức thực hiện tắt máy / chế độ ngủ
+ * Các phương thức tắt màn hình & hành động khi hết giờ
  */
 enum class ShutdownMode(
     val title: String,
     val description: String,
     val badge: String,
-    val requiresRoot: Boolean = false,
     val requiresAccessibility: Boolean = false,
-    val requiresShizuku: Boolean = false
+    val requiresDeviceAdmin: Boolean = false
 ) {
     /**
-     * Dành cho máy thông thường chưa Root (Android 11, 12, 13, 14, 15+):
-     * Kích hoạt Global Action mở Menu Nguồn và tự động nhấp vào nút "Tắt nguồn"
+     * Khuyên dùng cho Android 9, 10, 11, 12, 13, 14, 15+:
+     * Tắt màn hình bằng AccessibilityService (GLOBAL_ACTION_LOCK_SCREEN).
+     * Điểm đặc biệt: KHÔNG làm mất vân tay/nhận diện khuôn mặt!
      */
     ACCESSIBILITY(
-        title = "Tự động tắt nguồn (Trợ năng)",
-        description = "Mở menu nguồn hệ thống và tự động bấm nút tắt máy. Hoạt động trên mọi phiên bản Android đời cao không cần Root.",
-        badge = "Khuyên dùng (No Root)",
+        title = "Tắt màn hình (Trợ năng)",
+        description = "Khóa màn hình tự nhiên như bấm phím nguồn. Vẫn mở khóa bình thường bằng Vân tay / Khuôn mặt (Biometrics).",
+        badge = "Khuyên dùng (Giữ vân tay)",
         requiresAccessibility = true
     ),
 
     /**
-     * Dành cho Android 11+ thông qua Shizuku (Wireless Debugging):
-     * Thực thi lệnh shutdown hệ thống mượt mà như lệnh adb shell.
+     * Trở về trang chính (Home) rồi khóa màn hình
      */
-    SHIZUKU(
-        title = "Tắt máy qua Shizuku (ADB)",
-        description = "Chạy lệnh 'svc power shutdown' qua Shizuku. Tắt nguồn ngay lập tức, cực kỳ mượt mà cho Android 11-15+.",
-        badge = "Shizuku ADB",
-        requiresShizuku = true
+    HOME_AND_LOCK(
+        title = "Về Home rồi tắt màn hình",
+        description = "Thoát ứng dụng xem phim/nghe nhạc về màn hình chính trước khi tắt để tiết kiệm RAM và bảo mật.",
+        badge = "Trợ năng + Home",
+        requiresAccessibility = true
     ),
 
     /**
-     * Dành cho máy đã Root (Magisk / KernelSU / APatch)
+     * Khóa màn hình qua Device Administrator (Phương thức truyền thống)
      */
-    ROOT(
-        title = "Tắt máy trực tiếp (Root)",
-        description = "Gọi lệnh 'reboot -p' bằng quyền Superuser (su). Yêu cầu máy đã Root.",
-        badge = "Cần Root",
-        requiresRoot = true
+    DEVICE_ADMIN(
+        title = "Khóa màn hình (Quản trị viên)",
+        description = "Sử dụng quyền Quản trị viên thiết bị để khóa màn hình lập tức (lần mở sau có thể cần nhập mã PIN/mật khẩu).",
+        badge = "Khóa bảo mật",
+        requiresDeviceAdmin = true
     ),
 
     /**
-     * Chế độ Ngủ & Khóa máy (Sleep Timer):
-     * Khóa màn hình, ngắt toàn bộ âm thanh/nhạc đang phát, kích hoạt DND.
+     * Chỉ tắt nhạc / media, để màn hình tự tắt theo cài đặt máy
      */
-    SLEEP_LOCK(
-        title = "Chế độ Ngủ & Khóa màn hình",
-        description = "Dừng phát toàn bộ nhạc/video (Spotify, YouTube, v.v.), khóa màn hình và bật Không làm phiền. Thích hợp nghe nhạc trước khi ngủ.",
-        badge = "An toàn 100%"
+    MEDIA_ONLY(
+        title = "Chỉ dừng nhạc / Media",
+        description = "Dừng toàn bộ Spotify, YouTube, podcast v.v. Màn hình sẽ tự động tắt theo thời gian chờ (Screen timeout) của máy.",
+        badge = "Không cần quyền đặc biệt"
     )
 }

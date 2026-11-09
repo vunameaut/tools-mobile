@@ -8,7 +8,8 @@ data class TimerState(
     val selectedMode: ShutdownMode = ShutdownMode.ACCESSIBILITY,
     val fadeAudio: Boolean = true,
     val playWarningSound: Boolean = true,
-    val turnOnDnd: Boolean = true
+    val turnOnDnd: Boolean = true,
+    val shakeToExtend: Boolean = true
 ) {
     val progress: Float
         get() = if (totalSeconds > 0) {

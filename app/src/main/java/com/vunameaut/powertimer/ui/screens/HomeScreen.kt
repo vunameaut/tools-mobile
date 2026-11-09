@@ -1,9 +1,7 @@
 package com.vunameaut.powertimer.ui.screens
 
 import android.app.TimePickerDialog
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -39,12 +37,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,7 +67,6 @@ fun HomeScreen(
     val context = LocalContext.current
 
     val scrollState = rememberScrollState()
-
     val presets = listOf(15L, 30L, 45L, 60L, 90L, 120L)
 
     val currentDisplayTime = if (timerState.isRunning) {
@@ -104,7 +97,7 @@ fun HomeScreen(
                             color = AccentPurple.copy(alpha = 0.2f)
                         ) {
                             Text(
-                                text = "v1.0 • Android 15 ready",
+                                text = "Hẹn giờ tắt màn hình",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = AccentCyan,
@@ -138,18 +131,18 @@ fun HomeScreen(
                 .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // Permission Alert Banner if Accessibility mode is selected but not enabled
-            if (selectedMode == ShutdownMode.ACCESSIBILITY && !permissions.isAccessibilityEnabled) {
+            // Cảnh báo nếu chế độ chọn cần Trợ năng mà chưa bật
+            if (selectedMode.requiresAccessibility && !permissions.isAccessibilityEnabled) {
                 PermissionItem(
                     title = "Cần bật Dịch vụ Trợ năng",
-                    description = "Để tự động tắt máy trên Android đời cao, vui lòng bật dịch vụ PowerTimer trong cài đặt Trợ năng.",
+                    description = "Để tắt màn hình mà vẫn giữ vân tay / khuôn mặt, vui lòng bật PowerTimer trong Cài đặt Trợ năng.",
                     isGranted = false,
                     onGrantClick = { viewModel.openAccessibilitySettings() },
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
             }
 
-            // Circular Countdown Display
+            // Đồng hồ đếm ngược tròn Neon
             CircularCountdownTimer(
                 progress = timerState.progress,
                 timeText = currentDisplayTime,
@@ -173,7 +166,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Presets row (only active when timer is not running)
+            // Danh sách preset thời gian nhanh (khi chưa chạy)
             if (!timerState.isRunning) {
                 Text(
                     text = "Mốc thời gian nhanh",
@@ -210,9 +203,9 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Mode Selection Section
+                // Lựa chọn cách tắt màn hình
                 Text(
-                    text = "Phương thức hẹn giờ",
+                    text = "Tùy chọn khi hết giờ",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -223,10 +216,9 @@ fun HomeScreen(
 
                 ShutdownMode.values().forEach { mode ->
                     val isAvailable = when (mode) {
-                        ShutdownMode.ACCESSIBILITY -> true
-                        ShutdownMode.SHIZUKU -> permissions.isShizukuAvailable
-                        ShutdownMode.ROOT -> permissions.isRootAvailable
-                        ShutdownMode.SLEEP_LOCK -> true
+                        ShutdownMode.ACCESSIBILITY, ShutdownMode.HOME_AND_LOCK -> permissions.isAccessibilityEnabled
+                        ShutdownMode.DEVICE_ADMIN -> permissions.isDeviceAdminActive
+                        ShutdownMode.MEDIA_ONLY -> true
                     }
                     ModeSelectorCard(
                         mode = mode,
@@ -237,7 +229,7 @@ fun HomeScreen(
                     )
                 }
             } else {
-                // If timer is running, show active info
+                // Đang đếm ngược
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -245,15 +237,16 @@ fun HomeScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Đang áp dụng: ${timerState.selectedMode.title}",
+                            text = "Đang kích hoạt: ${timerState.selectedMode.title}",
                             fontWeight = FontWeight.Bold,
                             color = AccentCyan
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Hệ thống sẽ tự động thực thi khi đồng hồ về 0. Thông báo ghim đang hoạt động ở thanh trạng thái.",
+                            text = "✨ Mẹo: Bạn có thể lắc nhẹ điện thoại bất kỳ lúc nào để tự động cộng thêm 10 phút mà không cần mở sáng màn hình!",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            lineHeight = 18.sp
                         )
                     }
                 }
@@ -261,7 +254,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Main Action Buttons
+            // Nút bấm chính
             if (!timerState.isRunning) {
                 Button(
                     onClick = { viewModel.startTimer() },

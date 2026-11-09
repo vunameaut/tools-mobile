@@ -50,6 +50,7 @@ fun SettingsScreen(
     val fadeAudio by viewModel.fadeAudio.collectAsState()
     val enableDnd by viewModel.enableDnd.collectAsState()
     val playWarning by viewModel.playWarningSound.collectAsState()
+    val shakeToExtend by viewModel.shakeToExtend.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.refreshPermissions()
@@ -89,9 +90,9 @@ fun SettingsScreen(
                 .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // Tùy chọn hoạt động
+            // Tùy chọn hoạt động thông minh
             Text(
-                text = "Tùy chọn hẹn giờ",
+                text = "Tính năng thông minh",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -106,8 +107,17 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     SettingToggleRow(
-                        title = "Giảm dần âm lượng",
-                        description = "Giảm âm lượng dần trong 10 giây trước khi tắt",
+                        title = "Lắc máy để gia hạn (+10 phút)",
+                        description = "Lắc nhẹ điện thoại khi còn thức để tự động cộng thêm thời gian mà không cần bật sáng màn hình",
+                        checked = shakeToExtend,
+                        onCheckedChange = { viewModel.toggleShakeToExtend(it) }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    SettingToggleRow(
+                        title = "Giảm dần âm lượng (Fade-out)",
+                        description = "Hạ âm lượng nhạc từ từ trong 10 giây trước khi tắt màn hình giúp dễ ngủ",
                         checked = fadeAudio,
                         onCheckedChange = { viewModel.toggleFadeAudio(it) }
                     )
@@ -116,7 +126,7 @@ fun SettingsScreen(
 
                     SettingToggleRow(
                         title = "Bật Không làm phiền (DND)",
-                        description = "Tự động kích hoạt chế độ Không làm phiền khi hết giờ",
+                        description = "Tự động kích hoạt Không làm phiền khi tắt màn hình để giấc ngủ không bị gián đoạn",
                         checked = enableDnd,
                         onCheckedChange = { viewModel.toggleDnd(it) }
                     )
@@ -125,7 +135,7 @@ fun SettingsScreen(
 
                     SettingToggleRow(
                         title = "Rung báo trước 30 giây",
-                        description = "Rung nhắc nhở để người dùng có thể gia hạn thêm giờ nếu cần",
+                        description = "Rung nhắc nhở nhẹ trước 30 giây để bạn biết nếu muốn gia hạn",
                         checked = playWarning,
                         onCheckedChange = { viewModel.toggleWarningSound(it) }
                     )
@@ -136,7 +146,7 @@ fun SettingsScreen(
 
             // Danh sách quyền cho Android đời cao
             Text(
-                text = "Kiểm tra quyền hệ thống (Android 11 - 15+)",
+                text = "Quyền hạn hệ thống (Android 11 - 15+)",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -145,7 +155,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Các bản Android mới yêu cầu cấp quyền để dịch vụ chạy ngầm không bị hệ điều hành tắt:",
+                text = "Để tắt màn hình êm ái mà vẫn giữ nguyên mở khóa Vân tay / Khuôn mặt:",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
             )
@@ -154,7 +164,7 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Dịch vụ Trợ năng (Accessibility)",
-                description = "Bắt buộc cho chế độ tự động mở menu nguồn và bấm Tắt máy không cần Root.",
+                description = "Bắt buộc để tắt màn hình tự nhiên mà không làm mất tính năng mở khóa bằng Vân tay / Khuôn mặt.",
                 isGranted = permissions.isAccessibilityEnabled,
                 onGrantClick = { viewModel.openAccessibilitySettings() },
                 modifier = Modifier.padding(vertical = 4.dp)
@@ -162,7 +172,7 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Tắt tối ưu hóa pin",
-                description = "Ngăn chặn các hãng điện thoại (Samsung, Xiaomi, Pixel) ngắt đồng hồ đếm ngược khi khóa màn hình.",
+                description = "Ngăn chặn hệ điều hành (Samsung, Xiaomi, Pixel...) ngắt đồng hồ đếm ngược khi máy ngủ sâu.",
                 isGranted = permissions.isBatteryOptimizationIgnored,
                 onGrantClick = { viewModel.requestBatteryOptimization() },
                 modifier = Modifier.padding(vertical = 4.dp)
@@ -170,7 +180,7 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Báo thức chính xác (Exact Alarm)",
-                description = "Đảm bảo hẹn giờ chính xác đến từng giây kể cả khi thiết bị vào chế độ ngủ sâu (Doze).",
+                description = "Đảm bảo hẹn giờ chính xác đến từng giây trên Android 12, 13, 14, 15+.",
                 isGranted = permissions.canScheduleExactAlarm,
                 onGrantClick = { viewModel.openExactAlarmSettings() },
                 modifier = Modifier.padding(vertical = 4.dp)
@@ -178,21 +188,11 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Quản trị viên thiết bị",
-                description = "Dùng để khóa màn hình ngay lập tức trong Chế độ Ngủ.",
+                description = "Phương thức thay thế nếu bạn không muốn bật Trợ năng (Lưu ý: sẽ yêu cầu nhập mã PIN khi mở lại).",
                 isGranted = permissions.isDeviceAdminActive,
                 onGrantClick = { viewModel.requestDeviceAdmin() },
                 modifier = Modifier.padding(vertical = 4.dp)
             )
-
-            if (permissions.isShizukuAvailable) {
-                PermissionItem(
-                    title = "Quyền Shizuku (Wireless ADB)",
-                    description = "Cho phép chạy lệnh tắt máy trực tiếp qua ADB không cần Root.",
-                    isGranted = permissions.hasShizukuPermission,
-                    onGrantClick = { viewModel.requestShizukuPermission() },
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-            }
         }
     }
 }

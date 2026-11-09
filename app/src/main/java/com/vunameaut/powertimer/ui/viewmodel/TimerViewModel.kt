@@ -2,27 +2,20 @@ package com.vunameaut.powertimer.ui.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.data.model.TimerState
 import com.vunameaut.powertimer.manager.PermissionManager
 import com.vunameaut.powertimer.service.TimerForegroundService
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 
 data class PermissionStatusState(
     val hasNotification: Boolean = false,
     val isAccessibilityEnabled: Boolean = false,
     val isBatteryOptimizationIgnored: Boolean = false,
     val canScheduleExactAlarm: Boolean = false,
-    val isDeviceAdminActive: Boolean = false,
-    val isRootAvailable: Boolean = false,
-    val isShizukuAvailable: Boolean = false,
-    val hasShizukuPermission: Boolean = false
+    val isDeviceAdminActive: Boolean = false
 )
 
 class TimerViewModel(application: Application) : AndroidViewModel(application) {
@@ -30,7 +23,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     private val permissionManager = PermissionManager(application)
 
     // Configuration before timer starts
-    private val _selectedSeconds = MutableStateFlow(1800L) // Default 30 mins
+    private val _selectedSeconds = MutableStateFlow(1800L) // Mặc định 30 phút
     val selectedSeconds: StateFlow<Long> = _selectedSeconds.asStateFlow()
 
     private val _selectedMode = MutableStateFlow(ShutdownMode.ACCESSIBILITY)
@@ -44,6 +37,9 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _playWarningSound = MutableStateFlow(true)
     val playWarningSound: StateFlow<Boolean> = _playWarningSound.asStateFlow()
+
+    private val _shakeToExtend = MutableStateFlow(true)
+    val shakeToExtend: StateFlow<Boolean> = _shakeToExtend.asStateFlow()
 
     private val _permissions = MutableStateFlow(PermissionStatusState())
     val permissions: StateFlow<PermissionStatusState> = _permissions.asStateFlow()
@@ -61,10 +57,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
             isAccessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(),
             isBatteryOptimizationIgnored = permissionManager.isIgnoringBatteryOptimizations(),
             canScheduleExactAlarm = permissionManager.canScheduleExactAlarms(),
-            isDeviceAdminActive = permissionManager.isDeviceAdminActive(),
-            isRootAvailable = permissionManager.isRootAvailable(),
-            isShizukuAvailable = permissionManager.isShizukuAvailable(),
-            hasShizukuPermission = permissionManager.hasShizukuPermission()
+            isDeviceAdminActive = permissionManager.isDeviceAdminActive()
         )
     }
 
@@ -96,6 +89,10 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
         _playWarningSound.value = enabled
     }
 
+    fun toggleShakeToExtend(enabled: Boolean) {
+        _shakeToExtend.value = enabled
+    }
+
     fun startTimer() {
         TimerForegroundService.startTimer(
             context = getApplication(),
@@ -103,7 +100,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
             mode = _selectedMode.value,
             fadeAudio = _fadeAudio.value,
             enableDnd = _enableDnd.value,
-            playWarning = _playWarningSound.value
+            playWarning = _playWarningSound.value,
+            shakeToExtend = _shakeToExtend.value
         )
     }
 
@@ -120,5 +118,4 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     fun requestBatteryOptimization() = permissionManager.requestIgnoreBatteryOptimizations()
     fun openExactAlarmSettings() = permissionManager.openExactAlarmSettings()
     fun requestDeviceAdmin() = permissionManager.requestDeviceAdmin()
-    fun requestShizukuPermission() = permissionManager.requestShizukuPermission()
 }

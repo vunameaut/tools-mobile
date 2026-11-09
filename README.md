@@ -1,4 +1,4 @@
-# ⚡ PowerTimer — Hẹn Giờ Tắt Máy & Chế Độ Ngủ Thông Minh Cho Android Đời Cao
+# 🌙 PowerTimer — App Hẹn Giờ Tắt Màn Hình & Chế Độ Ngủ Cho Android Đời Cao
 
 [![Android CI Build](https://github.com/vunameaut/android-power-timer/actions/workflows/android.yml/badge.svg)](https://github.com/vunameaut/android-power-timer/actions/workflows/android.yml)
 [![Platform](https://img.shields.io/badge/Platform-Android_8.0_--_15+-brightgreen.svg?logo=android)](https://www.android.com/)
@@ -6,101 +6,95 @@
 [![UI](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4.svg?logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**PowerTimer** là ứng dụng di động Android hiện đại được thiết kế đặc thù để giải quyết triệt để bài toán **hẹn giờ tắt máy, khóa màn hình và dừng toàn bộ âm thanh** trên các phiên bản **Android đời cao (Android 11, 12, 13, 14 và 15+)**.
+**PowerTimer** là ứng dụng di động Android cao cấp giúp **hẹn giờ tắt màn hình, khóa máy và dừng toàn bộ âm thanh/nhạc/video** tự động, chuyên dụng cho người dùng thường xuyên nghe nhạc (Spotify, SoundCloud), xem video (YouTube, Netflix, TikTok) hoặc podcast trước khi ngủ.
+
+Đặc biệt, ứng dụng được tối ưu sâu cho **các phiên bản Android đời cao hiện nay (Android 11, 12, 13, 14 và 15+)** để khắc phục hoàn toàn tình trạng bị hệ điều hành tắt ngầm hoặc làm mất tính năng mở khóa vân tay!
 
 ---
 
-## 🎯 Vấn Đề Kỹ Thuật Trên Android Đời Cao & Giải Pháp
+## 💡 Điểm Vượt Trội Trên Android Đời Cao (Android 11 – 15+)
 
-Từ Android 8.0 trở lên và đặc biệt siết chặt từ Android 11-15:
-1. **Bảo mật hệ điều hành:** Android không cấp quyền `android.permission.SHUTDOWN` cho ứng dụng thông thường của bên thứ ba nếu không có chứng chỉ hệ thống (System Signature) hoặc Root.
-2. **Tiến trình chạy ngầm:** Hệ điều hành và các tùy biến OEM (Samsung OneUI, Xiaomi MIUI/HyperOS, Oppo ColorOS, v.v.) thường xuyên "kill" các ứng dụng đếm ngược khi màn hình tắt nếu không cấu hình Foreground Service và ngoại lệ pin đúng cách.
+### 1. 🔒 Tắt màn hình KHÔNG làm mất Vân tay / Khuôn mặt (Biometrics)
+- Các app truyền thống dùng quyền *Device Administrator* (`DevicePolicyManager.lockNow()`), dẫn đến việc khi mở máy lại **bắt buộc phải gõ mật khẩu/PIN**, không dùng được vân tay.
+- **PowerTimer** sử dụng API Trợ năng hiện đại `AccessibilityService.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)` (từ Android 9+). Màn hình tắt tự nhiên như bạn vừa bấm phím nguồn vật lý, **vẫn mở khóa bình thường bằng Vân tay / Khuôn mặt!**
 
-### 💡 4 Phương Thức Hoạt Động Của PowerTimer:
+### 2. 📳 Lắc máy để gia hạn (+10 phút)
+- Bạn đang nghe nhạc nhưng vẫn chưa ngủ được? Không cần mở sáng màn hình làm chói mắt, chỉ cần **lắc nhẹ điện thoại**, cảm biến gia tốc kế (Accelerometer) sẽ tự động cộng thêm 10 phút và rung nhẹ xác nhận.
 
-| Chế độ | Nguyên lý hoạt động | Yêu cầu | Độ tương thích |
+### 3. 🎵 Giảm âm lượng từ từ (Fade-out) & Ngắt Media
+- 10 giây trước khi tắt màn hình, âm lượng sẽ giảm dần êm ái, sau đó giải phóng Audio Focus để dừng mọi ứng dụng phát nhạc (Spotify, YouTube, Podbean, Chrome...).
+
+### 4. 🌙 Bật chế độ Không làm phiền (Do Not Disturb - DND)
+- Tự động chuyển sang Không làm phiền khi tắt màn hình để các thông báo tin nhắn đêm khuya không làm phiền giấc ngủ của bạn.
+
+### 5. 🔋 Chạy ngầm bền bỉ — Không bị hệ thống ngắt (Anti-Kill Service)
+- Tích hợp chuẩn **Android 14+ Foreground Service** với type `specialUse`.
+- Sử dụng `USE_EXACT_ALARM` và `WakeLock` đảm bảo đồng hồ đánh thức máy chính xác đến từng giây kể cả khi thiết bị vào trạng thái ngủ sâu (Doze Mode).
+
+---
+
+## 📱 4 Chế Độ Tắt Màn Hình Linh Hoạt
+
+| Chế độ | Mô tả chi tiết | Quyền yêu cầu | Ưu điểm |
 |---|---|---|---|
-| **1. Trợ năng tự động (Khuyên dùng)** | Sử dụng `AccessibilityService.performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)` để kích hoạt menu nguồn và tự động click nút *Tắt nguồn* kèm xác nhận. | Cấp quyền Trợ năng | **Android 8.0 – 15+ (Không cần Root)** |
-| **2. Shizuku / Wireless ADB** | Gọi `svc power shutdown` qua Shizuku Binder. Tắt máy sạch và mượt mà bằng quyền ADB. | Shizuku (Ghép nối qua Wifi) | **Android 11 – 15+ (Không cần Root)** |
-| **3. Superuser (Root)** | Thực thi lệnh `su -c reboot -p` hoặc `svc power shutdown`. | Máy đã Root (Magisk/KernelSU) | **Mọi phiên bản Android đã Root** |
-| **4. Chế độ Ngủ (Sleep Timer)** | Dừng phát nhạc/video (Spotify, YouTube), giảm dần âm lượng (Fade-out), bật Không làm phiền (DND) và khóa màn hình. | Quản trị viên hoặc Trợ năng | **100% thiết bị Android** |
+| **1. Tắt màn hình (Trợ năng)** | Tắt và khóa màn hình tự nhiên qua Accessibility. | Dịch vụ Trợ năng | **Giữ nguyên mở khóa Vân tay / Face Unlock** |
+| **2. Về Home rồi tắt màn hình** | Thoát ứng dụng phim/nhạc về màn hình chính (Home) trước khi khóa máy. | Dịch vụ Trợ năng | Tránh lộ màn hình app khi mở lại máy |
+| **3. Khóa bảo mật (Quản trị viên)** | Khóa màn hình lập tức qua Device Administrator. | Quản trị viên thiết bị | Phù hợp khóa máy an toàn |
+| **4. Chỉ dừng nhạc / Media** | Chỉ dừng âm thanh phát, màn hình sẽ tự tắt theo thời gian chờ (timeout) của máy. | Không cần quyền | Nhẹ nhàng, đơn giản |
 
 ---
 
-## ✨ Tính Năng Nổi Bật
+## ⚙️ Hướng Dẫn Cài Đặt Cho Các Hãng Máy Đời Mới
 
-- ⏱ **Mặt đồng hồ đếm ngược Neon:** Hiệu ứng Circular Progress Bar mượt mà với Jetpack Compose.
-- ⚡ **Mốc thời gian nhanh (Quick Presets):** 15 phút, 30 phút, 45 phút, 60 phút, 90 phút, 120 phút hoặc bộ chọn giờ phút tùy chỉnh.
-- 🔔 **Dịch vụ thông báo ghim (Foreground Service):** Luôn hiển thị thời gian thực ở thanh trạng thái với nút hành động nhanh:
-  - `+10 phút`: Gia hạn thêm khi chưa ngủ được.
-  - `Dừng lại`: Hủy hẹn giờ lập tức.
-- 📳 **Rung cảnh báo thông minh:** Rung nhắc nhở nhẹ trước 30 giây khi sắp đến giờ tắt.
-- 🎵 **Làm dịu âm thanh (Fade-out):** Tự động hạ âm lượng từ từ trước khi tắt để không làm giật mình khi đang ngủ say.
-- 🔋 **Chuẩn hóa Android 14/15:**
-  - Hỗ trợ Foreground Service Type `specialUse` theo chính sách mới của Google Play.
-  - Tích hợp `USE_EXACT_ALARM` & `SCHEDULE_EXACT_ALARM` kết hợp `WakeLock` để đánh thức CPU chính xác đến từng giây.
-  - Trình kiểm tra trạng thái quyền hạn trực quan (Permission Checklist).
+Để ứng dụng đếm ngược không bị hệ thống tự động tắt:
+
+1. **Samsung (OneUI 5/6/7 - Android 13/14/15):**
+   - Vào Cài đặt ➔ Ứng dụng ➔ PowerTimer ➔ Pin ➔ Chọn **Không hạn chế (Unrestricted)**.
+   - Bật Dịch vụ Trợ năng cho **PowerTimer**.
+2. **Xiaomi / Redmi / POCO (MIUI / HyperOS):**
+   - Nhấn giữ icon PowerTimer ➔ Thông tin ứng dụng ➔ Bật **Tự khởi chạy (Autostart)**.
+   - Tiết kiệm pin ➔ Chọn **Không hạn chế**.
+3. **Google Pixel / Moto / Sony (Stock Android 12 - 15):**
+   - Vào mục **Cài đặt & Quyền** trong ứng dụng và nhấn **Tắt tối ưu hóa pin**.
 
 ---
 
-## 🛠 Kiến Trúc & Công Nghệ
+## 🛠 Kiến Trúc Kỹ Thuật
 
 ```
 PowerTimer/
 ├── app/src/main/
 │   ├── AndroidManifest.xml              # Khai báo FGS specialUse, Exact Alarm, Accessibility
 │   ├── java/com/vunameaut/powertimer/
-│   │   ├── MainActivity.kt              # Entry point Compose, runtime permission dispatcher
-│   │   ├── PowerTimerApplication.kt     # App context
+│   │   ├── MainActivity.kt              # Jetpack Compose UI & Runtime Permissions
+│   │   ├── PowerTimerApplication.kt     # App Context
 │   │   ├── data/model/
-│   │   │   ├── ShutdownMode.kt          # 4 chế độ tắt máy
-│   │   │   └── TimerState.kt            # Trạng thái đếm ngược reactive
+│   │   │   ├── ShutdownMode.kt          # 4 chế độ tắt màn hình
+│   │   │   └── TimerState.kt            # Model reactive Flow
 │   │   ├── manager/
-│   │   │   ├── AudioMediaManager.kt     # Audio focus, Media pause, Fade-out, DND
-│   │   │   ├── PermissionManager.kt     # Quản lý & kiểm tra quyền hệ thống
-│   │   │   └── ShutdownManager.kt       # Điều phối các chiến lược tắt máy
+│   │   │   ├── AudioMediaManager.kt     # Audio Focus, Media pause, Fade-out, DND
+│   │   │   ├── PermissionManager.kt     # Kiểm tra quyền Android đời cao
+│   │   │   ├── ShakeDetector.kt         # Cảm biến lắc máy gia hạn giờ
+│   │   │   └── ShutdownManager.kt       # Điều phối tắt màn hình / về Home
 │   │   ├── receiver/
-│   │   │   ├── DeviceAdminSampleReceiver.kt # Khóa màn hình tức thì
-│   │   │   └── TimerAlarmReceiver.kt    # AlarmManager wakeup backup receiver
+│   │   │   ├── DeviceAdminSampleReceiver.kt # Khóa màn hình dự phòng
+│   │   │   └── TimerAlarmReceiver.kt    # Exact Alarm Wakeup Receiver
 │   │   ├── service/
-│   │   │   ├── PowerAccessibilityService.kt # Tự động hóa menu tắt nguồn
+│   │   │   ├── PowerAccessibilityService.kt # Tắt màn hình giữ vân tay (GLOBAL_ACTION_LOCK_SCREEN)
 │   │   │   └── TimerForegroundService.kt    # Foreground service đếm ngược bền bỉ
 │   │   └── ui/
-│   │       ├── components/              # CircularCountdownTimer, ModeCard, PermissionItem
+│   │       ├── components/              # CircularCountdownTimer Neon, ModeCard, PermissionItem
 │   │       ├── screens/                 # HomeScreen, SettingsScreen
 │   │       ├── theme/                   # Material 3 Dynamic Dark/Light Theme
-│   │       └── viewmodel/               # MVVM StateFlow
-│   └── res/                             # Vector drawables, Strings đa ngôn ngữ, XML configs
+│   │       └── viewmodel/               # MVVM ViewModel
+│   └── res/                             # Adaptive icons, Strings tiếng Việt, XML configs
 └── .github/workflows/android.yml        # CI/CD tự động build debug APK
 ```
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Cấp Quyền
+## 💻 Biên Dịch Dự Án (Build APK)
 
-### 1. Đối với máy không Root (Dùng Trợ năng - Khuyên dùng)
-1. Cài đặt ứng dụng PowerTimer.
-2. Mở ứng dụng, tại mục cảnh báo hoặc vào biểu tượng **Cài đặt** (bánh răng).
-3. Nhấn **Cấp quyền** tại mục **Dịch vụ Trợ năng (Accessibility)** ➔ Bật công tắc cho **PowerTimer**.
-4. Nhấn **Tắt tối ưu hóa pin** để tránh bị Android tắt ngầm khi khóa màn hình.
-
-### 2. Đối với máy dùng Shizuku (Android 11 - 15+)
-1. Cài đặt và kích hoạt ứng dụng [Shizuku](https://shizuku.rikka.app/) qua tính năng *Gỡ lỗi không dây (Wireless Debugging)* trên điện thoại.
-2. Mở PowerTimer ➔ Chọn chế độ **Tắt máy qua Shizuku (ADB)** ➔ Xác nhận cấp quyền khi hộp thoại Shizuku hiện lên.
-
-### 3. Đối với máy đã Root
-- Chỉ cần chọn chế độ **Tắt máy trực tiếp (Root)**, ứng dụng sẽ tự động yêu cầu quyền Superuser từ Magisk / KernelSU khi hết thời gian đếm ngược.
-
----
-
-## 💻 Hướng Dẫn Biên Dịch (Build Source)
-
-### Yêu cầu:
-- **JDK:** 17 trở lên
-- **Android Studio:** Ladybug (2024.2.1) hoặc mới hơn
-- **Android SDK:** Compile SDK 35 (Android 15), Min SDK 26 (Android 8.0)
-
-### Lệnh Build APK qua dòng lệnh:
 ```bash
 # Clone repository
 git clone https://github.com/vunameaut/android-power-timer.git
@@ -109,15 +103,13 @@ cd android-power-timer
 # Biên dịch Debug APK
 ./gradlew assembleDebug
 
-# File APK tạo ra tại:
+# File APK được xuất tại:
 # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Hoặc tải trực tiếp file APK được build tự động tại tab **Actions** trên GitHub!
-
 ---
 
-## 📄 License
+## 📄 Bản Quyền (License)
 
-Dự án được phân phối dưới giấy phép [MIT License](LICENSE).
-Được phát triển bởi [Vũ Hoài Nam](https://github.com/vunameaut).
+Dự án được phân phối dưới giấy phép [MIT License](LICENSE).  
+Phát triển bởi [Vũ Hoài Nam](https://github.com/vunameaut).
