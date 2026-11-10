@@ -19,9 +19,6 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
     }
 
     signingConfigs {
@@ -77,9 +74,6 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
-        jniLibs {
-            useLegacyPackaging = true
-        }
     }
 }
 
@@ -99,9 +93,6 @@ dependencies {
     // Shizuku for modern rootless execution on Android 11+
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
-
-    // On-device yt-dlp engine for serverless multi-platform video downloading
-    implementation(libs.youtubedl.android)
 
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")

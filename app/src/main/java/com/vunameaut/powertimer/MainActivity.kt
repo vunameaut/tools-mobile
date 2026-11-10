@@ -93,8 +93,8 @@ class MainActivity : ComponentActivity() {
                                 state = updateState,
                                 onBack = { currentRoute = "hub" },
                                 onCheck = updateViewModel::check,
-                                onDownload = updateViewModel::download,
-                                onInstall = updateViewModel::install
+                                onDownload = { updateViewModel.download(this@MainActivity) },
+                                onInstall = { updateViewModel.install(this@MainActivity) }
                             )
                             else -> HubScreen(
                                 tools = ToolRegistry,
@@ -153,6 +153,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         timerViewModel.refreshPermissions()
+        updateViewModel.onAppResumed(this)
     }
 
     private fun checkAndRequestNotificationPermission() {

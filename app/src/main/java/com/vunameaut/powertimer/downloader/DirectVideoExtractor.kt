@@ -2,9 +2,6 @@ package com.vunameaut.powertimer.downloader
 
 import android.content.Context
 import android.util.Log
-import com.vunameaut.powertimer.PowerTimerApplication
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -62,10 +59,9 @@ object DirectVideoExtractor {
     }
 
     /**
-     * Giải mã & lấy link stream video trực tiếp theo chiến lược 3 tầng:
-     * - Tầng 1: On-Device Direct Kotlin Extractor (TikTok, Facebook, Instagram, X/Twitter, Threads, Direct MP4) -> < 1.5s, không cần server.
-     * - Tầng 2: On-Device YoutubeDL Engine (YouTube, Shorts, Reddit, Vimeo, +1000 trang) -> chạy trực tiếp trên điện thoại, không cần server.
-     * - Tầng 3: Cloud Server API Fallback (`video-downloader-api-backend.vercel.app`) -> dự phòng tự động.
+     * Giải mã & lấy link stream video trực tiếp siêu nhẹ (không nhúng Python nặng vào app):
+     * - Tầng 1: Pure Kotlin On-Device Direct Extractor (TikTok, Facebook, Instagram, YouTube, X/Twitter, Threads) -> < 1.5s, 0 MB thư viện.
+     * - Tầng 2: Online Server API (`video-downloader-api-backend.vercel.app`) -> gọi API trực tuyến khi cần hoặc khi người dùng chọn ưu tiên Server API.
      */
     suspend fun extract(
         context: Context,
@@ -90,50 +86,54 @@ object DirectVideoExtractor {
             )
         }
 
-        // 1. Tầng 1: On-Device Direct Extractors (nhanh nhất, IP gốc của điện thoại)
-        onStatusUpdate("Đang trích xuất trực tiếp (${platform.displayName})...")
-        try {
-            val direct = when (platform) {
-                VideoPlatform.TIKTOK -> extractTikTokDirect(cleanUrl)
-                VideoPlatform.FACEBOOK -> extractFacebookDirect(cleanUrl)
-                VideoPlatform.INSTAGRAM -> extractInstagramDirect(cleanUrl)
-                VideoPlatform.TWITTER -> extractTwitterDirect(cleanUrl)
-                VideoPlatform.THREADS -> extractThreadsDirect(cleanUrl)
-                else -> null
+        val preferOnDevice = isPreferOnDevice(context)
+
+        suspend fun tryOnDevice(): ExtractedVideo? {
+            onStatusUpdate("Đang trích xuất nhanh (${platform.displayName})...")
+            return try {
+                val direct = when (platform) {
+                    VideoPlatform.TIKTOK -> extractTikTokDirect(cleanUrl)
+                    VideoPlatform.FACEBOOK -> extractFacebookDirect(cleanUrl)
+                    VideoPlatform.INSTAGRAM -> extractInstagramDirect(cleanUrl)
+                    VideoPlatform.TWITTER -> extractTwitterDirect(cleanUrl)
+                    VideoPlatform.YOUTUBE -> extractYouTubeDirect(cleanUrl)
+                    VideoPlatform.THREADS -> extractThreadsDirect(cleanUrl)
+                    else -> null
+                }
+                if (direct != null && direct.downloadUrl.startsWith("http")) {
+                    Log.i(TAG, "On-Device Direct success (${direct.engineUsed}): ${direct.title}")
+                    direct
+                } else null
+            } catch (e: Throwable) {
+                Log.w(TAG, "On-Device direct extractor failed for $cleanUrl: ${e.message}")
+                errors.add("Direct: ${e.message}")
+                null
             }
-            if (direct != null && direct.downloadUrl.startsWith("http")) {
-                Log.i(TAG, "Tier 1 success (${direct.engineUsed}): ${direct.title}")
-                return@withContext Result.success(direct)
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Tier 1 direct extractor failed for $cleanUrl: ${e.message}")
-            errors.add("Direct: ${e.message}")
         }
 
-        // 2. Tầng 2: On-Device yt-dlp Engine (đặc biệt cho YouTube & fallback trên máy)
-        onStatusUpdate("Đang phân tích bằng nhân On-Device yt-dlp...")
-        try {
-            val onDeviceYtdlp = extractWithOnDeviceYoutubeDL(context, cleanUrl, platform)
-            if (onDeviceYtdlp != null && onDeviceYtdlp.downloadUrl.startsWith("http")) {
-                Log.i(TAG, "Tier 2 on-device yt-dlp success: ${onDeviceYtdlp.title}")
-                return@withContext Result.success(onDeviceYtdlp)
+        suspend fun tryServerApi(): ExtractedVideo? {
+            onStatusUpdate("Đang gọi Server API (${platform.displayName})...")
+            return try {
+                val serverResult = extractViaServerApi(context, cleanUrl, platform)
+                if (serverResult != null && serverResult.downloadUrl.startsWith("http")) {
+                    Log.i(TAG, "Cloud Server API success: ${serverResult.title}")
+                    serverResult
+                } else null
+            } catch (e: Throwable) {
+                Log.w(TAG, "Server API failed for $cleanUrl: ${e.message}")
+                errors.add("Server API: ${e.message}")
+                null
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Tier 2 on-device YoutubeDL failed for $cleanUrl: ${e.message}")
-            errors.add("OnDevice-YTDLP: ${e.message}")
         }
 
-        // 3. Tầng 3: Cloud Server API Fallback
-        onStatusUpdate("Đang kết nối Server Cloud dự phòng...")
-        try {
-            val serverResult = extractViaServerApi(context, cleanUrl, platform)
-            if (serverResult != null && serverResult.downloadUrl.startsWith("http")) {
-                Log.i(TAG, "Tier 3 cloud server success: ${serverResult.title}")
-                return@withContext Result.success(serverResult)
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Tier 3 server fallback failed for $cleanUrl: ${e.message}")
-            errors.add("Server: ${e.message}")
+        val result = if (preferOnDevice) {
+            tryOnDevice() ?: tryServerApi()
+        } else {
+            tryServerApi() ?: tryOnDevice()
+        }
+
+        if (result != null) {
+            return@withContext Result.success(result)
         }
 
         Result.failure(
@@ -531,76 +531,108 @@ object DirectVideoExtractor {
     }
 
     // ========================================================================
-    // TIER 2: ON-DEVICE YOUTUBEDL-ANDROID (YouTube, Shorts, 1000+ sites)
+    // TIER 1F: YOUTUBE / SHORTS (Pure Kotlin ANDROID InnerTube API 21.26.364)
     // ========================================================================
-    private fun extractWithOnDeviceYoutubeDL(
-        context: Context,
-        url: String,
-        platform: VideoPlatform
-    ): ExtractedVideo? {
-        if (!PowerTimerApplication.isYoutubeDLReady) {
-            try {
-                YoutubeDL.getInstance().init(context.applicationContext)
-            } catch (e: Throwable) {
-                Log.w(TAG, "Lazy YoutubeDL init failed: ${e.message}")
-                return null
+    internal fun extractYouTubeDirect(url: String): ExtractedVideo? {
+        try {
+            val idMatch = Regex("""(?:v=|youtu\.be/|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})""").find(url)
+            val videoId = idMatch?.groupValues?.get(1) ?: return null
+            val ytAndroidUa = "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip"
+
+            var visitorData = ""
+            runCatching {
+                val watchPage = fetchUrlFollowingRedirects(
+                    targetUrl = "https://www.youtube.com/watch?v=$videoId",
+                    headers = mapOf(
+                        "User-Agent" to DESKTOP_UA,
+                        "Accept-Language" to "en-US,en;q=0.9"
+                    )
+                )
+                val vm = Regex(""""visitorData"\s*:\s*"([^"]+)"""").find(watchPage.body)
+                if (vm != null) {
+                    visitorData = vm.groupValues[1]
+                }
             }
-        }
 
-        val request = YoutubeDLRequest(url).apply {
-            addOption("-f", "best[ext=mp4][protocol^=http][height<=1080]/best[ext=mp4][protocol^=http]/best[protocol^=http]/best")
-            addOption("--no-playlist")
-            addOption("--geo-bypass")
-            addOption("--no-check-certificates")
-        }
-
-        val info = YoutubeDL.getInstance().getInfo(request)
-        var directUrl = info.url
-
-        if (directUrl.isNullOrBlank() || directUrl.contains(".m3u8")) {
-            val formats = info.formats.orEmpty()
-            val progressiveMp4 = formats.filter { fmt ->
-                val u = fmt.url.orEmpty()
-                u.startsWith("http") &&
-                    !u.contains(".m3u8") &&
-                    fmt.ext == "mp4" &&
-                    fmt.vcodec != "none" &&
-                    fmt.acodec != "none"
-            }.maxByOrNull { it.height }
-
-            val anyProgressive = progressiveMp4 ?: formats.firstOrNull { fmt ->
-                val u = fmt.url.orEmpty()
-                u.startsWith("http") && !u.contains(".m3u8") && fmt.vcodec != "none"
+            val clientObj = JSONObject().apply {
+                put("clientName", "ANDROID")
+                put("clientVersion", "21.26.364")
+                put("androidSdkVersion", 30)
+                put("userAgent", ytAndroidUa)
+                put("osName", "Android")
+                put("osVersion", "11")
+                put("hl", "en")
+                if (visitorData.isNotBlank()) {
+                    put("visitorData", visitorData)
+                }
             }
-            if (anyProgressive != null && !anyProgressive.url.isNullOrBlank()) {
-                directUrl = anyProgressive.url
+
+            val payload = JSONObject().apply {
+                put("videoId", videoId)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+                put("context", JSONObject().put("client", clientObj))
+            }.toString()
+
+            val conn = (URL("https://www.youtube.com/youtubei/v1/player?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 12000
+                readTimeout = 15000
+                doOutput = true
+                setRequestProperty("User-Agent", ytAndroidUa)
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("X-YouTube-Client-Name", "3")
+                setRequestProperty("X-YouTube-Client-Version", "21.26.364")
+                setRequestProperty("Origin", "https://www.youtube.com")
             }
-        }
 
-        if (directUrl.isNullOrBlank()) return null
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload) }
+            if (conn.responseCode !in 200..299) return null
 
-        val headers = mutableMapOf("User-Agent" to DESKTOP_UA)
-        info.httpHeaders?.forEach { (k, v) ->
-            if (!k.isNullOrBlank() && !v.isNullOrBlank()) {
-                headers[k] = v
+            val json = JSONObject(readStream(conn))
+            val status = json.optJSONObject("playabilityStatus")?.optString("status")
+            if (status != "OK") return null
+
+            val formats = json.optJSONObject("streamingData")?.optJSONArray("formats") ?: return null
+            var bestMp4Url: String? = null
+            for (i in formats.length() - 1 downTo 0) {
+                val fmt = formats.optJSONObject(i) ?: continue
+                val u = fmt.optString("url")
+                if (u.startsWith("http")) {
+                    bestMp4Url = u
+                    break
+                }
             }
-        }
+            if (bestMp4Url.isNullOrBlank()) return null
 
-        return ExtractedVideo(
-            sourceUrl = url,
-            downloadUrl = directUrl,
-            title = sanitizeTitle(info.title ?: "${platform.displayName}_Video"),
-            author = info.uploader.orEmpty(),
-            durationSec = info.duration.toLong(),
-            thumbnailUrl = info.thumbnail.orEmpty(),
-            headers = headers,
-            platform = platform,
-            engineUsed = "On-Device yt-dlp Engine"
-        )
+            val details = json.optJSONObject("videoDetails")
+            val rawTitle = details?.optString("title").orEmpty().ifBlank { "YouTube_$videoId" }
+            val author = details?.optString("author").orEmpty()
+            val duration = details?.optString("lengthSeconds")?.toLongOrNull() ?: 0L
+            val thumbs = details?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+            val thumbUrl = if (thumbs != null && thumbs.length() > 0) {
+                thumbs.optJSONObject(thumbs.length() - 1)?.optString("url").orEmpty()
+            } else ""
+
+            return ExtractedVideo(
+                sourceUrl = url,
+                downloadUrl = bestMp4Url,
+                title = sanitizeTitle(rawTitle),
+                author = author,
+                durationSec = duration,
+                thumbnailUrl = thumbUrl,
+                headers = mapOf("User-Agent" to ytAndroidUa),
+                platform = VideoPlatform.YOUTUBE,
+                engineUsed = "On-Device YouTube Direct"
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "YouTube direct failed: ${e.message}")
+            return null
+        }
     }
 
     // ========================================================================
-    // TIER 3: CLOUD SERVER API FALLBACK (Vercel / FastAPI Backend)
+    // TIER 2: ONLINE SERVER API (Vercel / FastAPI Backend)
     // ========================================================================
     private fun extractViaServerApi(
         context: Context,
@@ -637,21 +669,64 @@ object DirectVideoExtractor {
             throw IllegalStateException(json.optString("detail", "Server trả về thất bại"))
         }
 
-        val streamUrl = json.optString("download_url")
-            .ifBlank { json.optString("direct_url") }
-        if (streamUrl.isBlank()) return null
+        val directUrl = json.optString("direct_url")
+        val rawDownloadUrl = json.optString("download_url")
+        val resolvedDownloadUrl = when {
+            directUrl.startsWith("http") -> directUrl
+            rawDownloadUrl.startsWith("http") -> rawDownloadUrl
+            rawDownloadUrl.startsWith("/") -> "$baseUrl$rawDownloadUrl"
+            else -> ""
+        }
+        if (resolvedDownloadUrl.isBlank()) return null
+
+        val headers = mutableMapOf("User-Agent" to DESKTOP_UA)
+        val serverHeaders = json.optJSONObject("http_headers")
+        if (serverHeaders != null) {
+            val keys = serverHeaders.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = serverHeaders.optString(k)
+                if (k.isNotBlank() && v.isNotBlank()) {
+                    headers[k] = v
+                }
+            }
+        }
 
         return ExtractedVideo(
             sourceUrl = url,
-            downloadUrl = streamUrl,
+            downloadUrl = resolvedDownloadUrl,
             title = sanitizeTitle(json.optString("title").ifBlank { "${platform.displayName}_Video" }),
-            author = json.optString("author"),
+            author = json.optString("uploader").ifBlank { json.optString("author") },
             durationSec = json.optLong("duration", 0L),
             thumbnailUrl = json.optString("thumbnail"),
-            headers = mapOf("User-Agent" to DESKTOP_UA),
+            headers = headers,
             platform = platform,
-            engineUsed = "Server Cloud (${json.optString("engine", "API")})"
+            engineUsed = "Server API (${baseUrl.substringAfter("://").substringBefore("/")})"
         )
+    }
+
+    suspend fun checkServerHealth(context: Context): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = getServerUrl(context)
+            val conn = (URL("$baseUrl/health").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10000
+                readTimeout = 10000
+                setRequestProperty("Accept", "application/json")
+            }
+            val code = conn.responseCode
+            val body = readStream(conn)
+            if (code in 200..299) {
+                val json = JSONObject(body)
+                val ver = json.optString("version", "2.2")
+                val ytdlp = json.optString("yt_dlp_version", "latest")
+                Result.success("Server Online (v$ver • yt-dlp $ytdlp)")
+            } else {
+                Result.failure(IllegalStateException("HTTP $code"))
+            }
+        } catch (e: Throwable) {
+            Result.failure(e)
+        }
     }
 
     // ========================================================================

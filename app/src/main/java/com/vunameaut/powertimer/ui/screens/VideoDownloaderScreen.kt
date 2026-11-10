@@ -103,10 +103,7 @@ import com.vunameaut.powertimer.ui.theme.DarkSurfaceVariant
 import com.vunameaut.powertimer.ui.theme.OutlineSoft
 import com.vunameaut.powertimer.ui.theme.TextPrimary
 import com.vunameaut.powertimer.ui.theme.TextSecondary
-import com.yausername.youtubedl_android.YoutubeDL
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -277,14 +274,14 @@ fun VideoDownloaderTool(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Chế độ On-Device Direct + yt-dlp Nhân Nội Bộ",
+                                    text = "Chế độ Trích Xuất Nhanh + Cloud Server API",
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         color = AccentGreen,
                                         fontWeight = FontWeight.Bold
                                     )
                                 )
                                 Text(
-                                    text = "Tải trực tiếp bằng mạng điện thoại, kèm Cloud Server dự phòng tự động",
+                                    text = "Siêu nhẹ (~10MB) • Tải trực tiếp kết hợp Server API Online",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = TextSecondary,
                                         fontSize = 11.5.sp
@@ -588,14 +585,14 @@ fun VideoDownloaderTool(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Ứng dụng ưu tiên giải mã và tải trực tiếp trên điện thoại (On-Device Direct + nhân yt-dlp nội bộ). Khi gặp link đặc biệt, app sẽ tự động dùng thêm Cloud Server dự phòng bên dưới:",
+                        text = "Ứng dụng sử dụng bộ trích xuất siêu nhẹ kết hợp gọi trực tiếp tới Server API Online của bạn (không nhúng thư viện nặng vào máy):",
                         fontSize = 13.sp,
                         color = TextSecondary
                     )
                     OutlinedTextField(
                         value = serverUrlInput,
                         onValueChange = { serverUrlInput = it },
-                        label = { Text("Server API Dự phòng") },
+                        label = { Text("Địa chỉ Server API Online") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -609,23 +606,17 @@ fun VideoDownloaderTool(
                         onClick = {
                             if (!isUpdatingYtdlp) {
                                 isUpdatingYtdlp = true
+                                DirectVideoExtractor.setServerUrl(
+                                    context,
+                                    serverUrlInput.ifBlank { DirectVideoExtractor.DEFAULT_SERVER_URL }
+                                )
                                 scope.launch {
-                                    val msg = withContext(Dispatchers.IO) {
-                                        try {
-                                            val status = YoutubeDL.getInstance().updateYoutubeDL(
-                                                context.applicationContext,
-                                                YoutubeDL.UpdateChannel._NIGHTLY
-                                            )
-                                            when (status) {
-                                                YoutubeDL.UpdateStatus.DONE -> "Đã cập nhật nhân yt-dlp mới nhất!"
-                                                YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "Nhân yt-dlp trên máy đã ở bản mới nhất."
-                                                else -> "Trạng thái cập nhật: $status"
-                                            }
-                                        } catch (e: Throwable) {
-                                            "Không thể cập nhật yt-dlp lúc này: ${e.message}"
-                                        }
-                                    }
+                                    val res = DirectVideoExtractor.checkServerHealth(context)
                                     isUpdatingYtdlp = false
+                                    val msg = res.fold(
+                                        onSuccess = { "Kết nối thành công: $it" },
+                                        onFailure = { "Không kết nối được Server: ${it.message}" }
+                                    )
                                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                 }
                             }
@@ -639,7 +630,7 @@ fun VideoDownloaderTool(
                                 color = AccentCyan
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Đang kiểm tra bản cập nhật yt-dlp...")
+                            Text("Đang kiểm tra kết nối Server API...")
                         } else {
                             Icon(
                                 imageVector = Icons.Rounded.AutoAwesome,
@@ -647,7 +638,7 @@ fun VideoDownloaderTool(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Cập nhật nhân yt-dlp trên thiết bị")
+                            Text("Kiểm tra kết nối Server API")
                         }
                     }
                 }

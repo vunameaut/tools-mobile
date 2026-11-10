@@ -91,5 +91,12 @@ class DirectVideoExtractorTest {
         assertNotNull("X/Twitter direct extraction should succeed", res)
         verifyMp4Stream(res!!)
     }
+
+    @Test
+    fun testYouTubeDirectExtractionAndDownload() {
+        val res = DirectVideoExtractor.extractYouTubeDirect("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        assertNotNull("YouTube direct extraction should succeed", res)
+        verifyMp4Stream(res!!)
+    }
 }
 

@@ -149,11 +149,15 @@ fun UpdateScreen(
                     is UpdateState.ReadyToInstall -> {
                         StatusRow(
                             icon = { Icon(Icons.Rounded.CheckCircle, null, tint = AccentGreen) },
-                            text = "Đã tải xong v${state.info.versionName}"
+                            text = if (state.waitingPermission) {
+                                "Đã tải xong v${state.info.versionName} — Vui lòng cấp quyền cài đặt"
+                            } else {
+                                "Đã tải xong v${state.info.versionName} — Đang mở trình cài đặt"
+                            }
                         )
-                        PrimaryButton("Cài đặt ngay", Icons.Rounded.SystemUpdate, onInstall)
+                        PrimaryButton("Cài đặt bản v${state.info.versionName} ngay", Icons.Rounded.SystemUpdate, onInstall)
                         Text(
-                            text = "Lần đầu Android sẽ yêu cầu cho phép “Cài ứng dụng không rõ nguồn gốc” cho Tools Hub.",
+                            text = "Nếu cửa sổ cài đặt của hệ thống chưa tự bật lên, hãy nhấn nút “Cài đặt ngay” ở trên.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -164,6 +168,9 @@ fun UpdateScreen(
                             icon = { Icon(Icons.Rounded.ErrorOutline, null, tint = AccentRed) },
                             text = state.message
                         )
+                        if (state.retryInfo != null) {
+                            PrimaryButton("Thử tải lại v${state.retryInfo.versionName}", Icons.Rounded.Download, onDownload)
+                        }
                         CheckButton(onCheck)
                     }
                 }

@@ -8,7 +8,6 @@ composeBom = "2024.11.00"
 coroutines = "1.9.0"
 materialIconsExtended = "1.7.5"
 shizuku = "13.1.5"
-youtubedlAndroid = "0.18.1"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
@@ -30,9 +29,6 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 # Shizuku for modern rootless elevated shell commands on Android 11+
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
-
-# On-device yt-dlp engine (serverless video downloading for 1000+ sites)
-youtubedl-android = { group = "io.github.junkfood02.youtubedl-android", name = "library", version.ref = "youtubedlAndroid" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
