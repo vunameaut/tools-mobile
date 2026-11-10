@@ -5,8 +5,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -1367,31 +1370,83 @@ private fun StoryWebViewLoginDialog(
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
-    val loginUrl = remember(platform) {
+    val mobileLoginUrl = remember(platform) {
         if (platform == VideoPlatform.INSTAGRAM) {
             "https://www.instagram.com/accounts/login/"
         } else {
-            "https://m.facebook.com/login.php"
+            "https://m.facebook.com/"
+        }
+    }
+    val desktopLoginUrl = remember(platform) {
+        if (platform == VideoPlatform.INSTAGRAM) {
+            "https://www.instagram.com/accounts/login/?hl=vi"
+        } else {
+            "https://www.facebook.com/login"
         }
     }
     val hasExistingSession = remember(platform) {
         DirectVideoExtractor.hasPlatformLogin(context, platform)
     }
     var loginCompleted by remember { mutableStateOf(false) }
+    var useManualCookieTab by remember { mutableStateOf(false) }
+    var useDesktopSite by remember { mutableStateOf(false) }
+    var manualCookieInput by remember {
+        mutableStateOf(DirectVideoExtractor.getPlatformCookie(context, platform))
+    }
+    var loadProgress by remember { mutableIntStateOf(10) }
+    var currentUrlDisplay by remember { mutableStateOf(mobileLoginUrl) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    fun checkAndSaveWebViewCookies(showToastIfMissing: Boolean) {
+        if (loginCompleted) return
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.flush()
+        val checkDomains = if (platform == VideoPlatform.INSTAGRAM) {
+            listOf("https://www.instagram.com", "https://instagram.com")
+        } else {
+            listOf("https://www.facebook.com", "https://m.facebook.com", "https://mbasic.facebook.com")
+        }
+        val combinedCookie = checkDomains
+            .mapNotNull { d -> cookieManager.getCookie(d) }
+            .maxByOrNull { it.length }
+            .orEmpty()
+
+        val isAuthed = if (platform == VideoPlatform.INSTAGRAM) {
+            combinedCookie.contains("sessionid=") &&
+                !combinedCookie.contains("sessionid=\"\"") &&
+                !combinedCookie.contains("sessionid=;")
+        } else {
+            combinedCookie.contains("c_user=") && combinedCookie.contains("xs=")
+        }
+        if (isAuthed) {
+            loginCompleted = true
+            onLoginSuccess(combinedCookie)
+        } else if (showToastIfMissing) {
+            Toast.makeText(
+                context,
+                "Chưa phát hiện phiên đăng nhập (${if (platform == VideoPlatform.INSTAGRAM) "sessionid" else "c_user & xs"}). Hãy đăng nhập hoàn tất trên trang bên dưới!",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = true
+        )
     ) {
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(20.dp),
             color = DarkSurface,
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.86f)
-                .border(1.dp, OutlineSoft, RoundedCornerShape(22.dp))
+                .fillMaxWidth(0.97f)
+                .fillMaxHeight(0.92f)
+                .border(1.dp, OutlineSoft, RoundedCornerShape(20.dp))
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                // Header
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1431,49 +1486,262 @@ private fun StoryWebViewLoginDialog(
                     }
                 }
 
-                Box(
+                // Mode Switcher Bar (WebView Mobile / WebView Desktop / Manual Cookie)
+                Row(
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val tab1Selected = !useManualCookieTab && !useDesktopSite
+                    val tab2Selected = !useManualCookieTab && useDesktopSite
+                    val tab3Selected = useManualCookieTab
+
+                    OutlinedButton(
+                        onClick = {
+                            useManualCookieTab = false
+                            useDesktopSite = false
+                            webViewRef?.apply {
+                                val rawUa = WebSettings.getDefaultUserAgent(context)
+                                settings.userAgentString = rawUa.replace("; wv", "").replace("Version/4.0 ", "")
+                                loadUrl(mobileLoginUrl)
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (tab1Selected) AccentCyan else OutlineSoft
+                        )
+                    ) {
+                        Text(
+                            text = "📱 Đăng nhập",
+                            fontSize = 11.sp,
+                            color = if (tab1Selected) AccentCyan else TextSecondary,
+                            fontWeight = if (tab1Selected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            useManualCookieTab = false
+                            useDesktopSite = true
+                            webViewRef?.apply {
+                                settings.userAgentString =
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                                loadUrl(desktopLoginUrl)
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (tab2Selected) AccentCyan else OutlineSoft
+                        )
+                    ) {
+                        Text(
+                            text = "💻 Bản Web",
+                            fontSize = 11.sp,
+                            color = if (tab2Selected) AccentCyan else TextSecondary,
+                            fontWeight = if (tab2Selected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { useManualCookieTab = true },
+                        modifier = Modifier.weight(1f).height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (tab3Selected) AccentAmber else OutlineSoft
+                        )
+                    ) {
+                        Text(
+                            text = "📋 Dán Cookie",
+                            fontSize = 11.sp,
+                            color = if (tab3Selected) AccentAmber else TextSecondary,
+                            fontWeight = if (tab3Selected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+
+                    if (!useManualCookieTab) {
+                        IconButton(
+                            onClick = { webViewRef?.reload() },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Tải lại",
+                                tint = AccentCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (useManualCookieTab) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = if (platform == VideoPlatform.INSTAGRAM) {
+                                "Dán chuỗi Cookie Instagram (có chứa sessionid=...) vào ô bên dưới:"
+                            } else {
+                                "Dán chuỗi Cookie Facebook (có chứa c_user=...; xs=...) vào ô bên dưới:"
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextPrimary)
+                        )
+                        OutlinedTextField(
+                            value = manualCookieInput,
+                            onValueChange = { manualCookieInput = it },
+                            placeholder = {
+                                Text(
+                                    text = if (platform == VideoPlatform.INSTAGRAM) {
+                                        "ds_user_id=...; sessionid=..."
+                                    } else {
+                                        "datr=...; c_user=...; xs=..."
+                                    },
+                                    fontSize = 12.sp,
+                                    color = TextSecondary
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentAmber,
+                                unfocusedBorderColor = OutlineSoft,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            )
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                                        ?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+                                    if (!clip.isNullOrBlank()) {
+                                        manualCookieInput = clip
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ContentPaste,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Dán từ bộ nhớ tạm")
+                            }
+                            Button(
+                                onClick = {
+                                    val trimmed = manualCookieInput.trim()
+                                    if (trimmed.isBlank()) {
+                                        Toast.makeText(context, "Vui lòng nhập Cookie!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    loginCompleted = true
+                                    onLoginSuccess(trimmed)
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentGreen,
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Text("Lưu Cookie", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                } else {
+                    if (loadProgress in 1..99) {
+                        LinearProgressIndicator(
+                            progress = { loadProgress / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp),
+                            color = AccentCyan,
+                            trackColor = DarkSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = currentUrlDisplay,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(DarkSurfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 12.dp, vertical = 3.dp)
+                    )
+
                     AndroidView(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
                         factory = { ctx ->
                             WebView(ctx).apply {
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                settings.userAgentString =
-                                    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                isFocusable = true
+                                isFocusableInTouchMode = true
+                                settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    databaseEnabled = true
+                                    loadsImagesAutomatically = true
+                                    useWideViewPort = true
+                                    loadWithOverviewMode = true
+                                    javaScriptCanOpenWindowsAutomatically = true
+                                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                    val defaultUa = WebSettings.getDefaultUserAgent(ctx)
+                                    userAgentString = defaultUa
+                                        .replace("; wv", "")
+                                        .replace("Version/4.0 ", "")
+                                }
                                 val cookieManager = CookieManager.getInstance()
                                 cookieManager.setAcceptCookie(true)
                                 cookieManager.setAcceptThirdPartyCookies(this, true)
 
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        super.onProgressChanged(view, newProgress)
+                                        loadProgress = newProgress
+                                    }
+                                }
+
                                 webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(
+                                        view: WebView?,
+                                        url: String?,
+                                        favicon: android.graphics.Bitmap?
+                                    ) {
+                                        super.onPageStarted(view, url, favicon)
+                                        if (!url.isNullOrBlank()) {
+                                            currentUrlDisplay = url
+                                        }
+                                    }
+
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         super.onPageFinished(view, url)
-                                        if (loginCompleted) return
-                                        val checkDomains = if (platform == VideoPlatform.INSTAGRAM) {
-                                            listOf("https://www.instagram.com", "https://instagram.com")
-                                        } else {
-                                            listOf("https://www.facebook.com", "https://m.facebook.com")
+                                        if (!url.isNullOrBlank()) {
+                                            currentUrlDisplay = url
                                         }
-                                        val combinedCookie = checkDomains.mapNotNull { d ->
-                                            cookieManager.getCookie(d)
-                                        }.maxByOrNull { it.length }.orEmpty()
-
-                                        val isAuthed = if (platform == VideoPlatform.INSTAGRAM) {
-                                            combinedCookie.contains("sessionid=") &&
-                                                !combinedCookie.contains("sessionid=\"\"") &&
-                                                !combinedCookie.contains("sessionid=;")
-                                        } else {
-                                            combinedCookie.contains("c_user=") && combinedCookie.contains("xs=")
-                                        }
-                                        if (isAuthed) {
-                                            loginCompleted = true
-                                            cookieManager.flush()
-                                            onLoginSuccess(combinedCookie)
-                                        }
+                                        checkAndSaveWebViewCookies(showToastIfMissing = false)
                                     }
 
                                     override fun shouldOverrideUrlLoading(
@@ -1482,15 +1750,54 @@ private fun StoryWebViewLoginDialog(
                                     ): Boolean {
                                         val reqUrl = request?.url?.toString().orEmpty()
                                         if (reqUrl.startsWith("http://") || reqUrl.startsWith("https://")) {
+                                            // Avoid Facebook /login.php with no args returning HTTP 400
+                                            if (reqUrl == "https://m.facebook.com/login.php" ||
+                                                reqUrl == "https://www.facebook.com/login.php"
+                                            ) {
+                                                view?.loadUrl("https://m.facebook.com/")
+                                                return true
+                                            }
                                             return false
                                         }
+                                        // Block fb:// or intent:// native app redirects so user stays inside WebView
                                         return true
                                     }
                                 }
-                                loadUrl(loginUrl)
+                                webViewRef = this
+                                loadUrl(mobileLoginUrl)
                             }
                         }
                     )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(DarkSurface)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Sau khi đăng nhập xong hệ thống sẽ tự lưu, hoặc bấm:",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { checkAndSaveWebViewCookies(showToastIfMissing = true) },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AccentGreen,
+                                contentColor = Color.Black
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("✓ Đã đăng nhập xong", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
