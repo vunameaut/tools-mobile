@@ -34,3 +34,4 @@ val ToolRegistry: List<ToolEntry> = listOf(
         content = { onBack -> PowerTimerTool(onExit = onBack) }
     )
 )
+

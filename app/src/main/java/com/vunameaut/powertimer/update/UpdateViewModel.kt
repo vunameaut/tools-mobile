@@ -71,3 +71,4 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         UpdateManager.install(getApplication(), s.apk)
     }
 }
+

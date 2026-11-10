@@ -45,3 +45,4 @@ fun PowerTimerTool(onExit: () -> Unit) {
         }
     }
 }
+

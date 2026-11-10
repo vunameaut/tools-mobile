@@ -1,5 +1,16 @@
 package com.vunameaut.powertimer.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.runtime.getValue
+import com.vunameaut.powertimer.ui.theme.AccentGreen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,10 +47,24 @@ fun PermissionItem(
     onGrantClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val iconTint by animateColorAsState(
+        targetValue = if (isGranted) AccentGreen else AccentRed,
+        animationSpec = tween(400),
+        label = "perm_tint"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = (if (isGranted) AccentGreen else AccentRed).copy(alpha = 0.25f),
+        animationSpec = tween(400),
+        label = "perm_border"
+    )
+
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-        modifier = modifier.fillMaxWidth()
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, borderColor),
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize()
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -56,7 +81,7 @@ fun PermissionItem(
                     Icon(
                         imageVector = if (isGranted) Icons.Default.Check else Icons.Default.Warning,
                         contentDescription = null,
-                        tint = if (isGranted) AccentCyan else AccentRed
+                        tint = iconTint
                     )
                     Text(
                         text = title,
@@ -76,13 +101,17 @@ fun PermissionItem(
                 )
             }
 
-            if (!isGranted) {
+            AnimatedVisibility(
+                visible = !isGranted,
+                enter = fadeIn() + expandHorizontally(),
+                exit = fadeOut() + shrinkHorizontally()
+            ) {
                 FilledTonalButton(
                     onClick = onGrantClick,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = AccentCyan,
-                        contentColor = Color.Black
+                        contentColor = Color(0xFF00363D)
                     ),
                     modifier = Modifier.padding(start = 12.dp)
                 ) {

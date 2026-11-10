@@ -1,7 +1,13 @@
 package com.vunameaut.powertimer.ui.components
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -46,17 +52,47 @@ fun CircularCountdownTimer(
     val surfaceColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     val gradientColors = listOf(AccentCyan, AccentPurple)
 
+    // Hiệu ứng "thở" khi đang đếm ngược
+    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "pulse_value"
+    )
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isRunning) 1f else 0f,
+        animationSpec = tween(500),
+        label = "glow_alpha"
+    )
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .size(size)
+            .clip(CircleShape)
             .clickable(onClick = onClick)
     ) {
         Canvas(modifier = Modifier.size(size)) {
+            val radius = (size.toPx() - strokeWidth.toPx()) / 2
+
+            // Quầng sáng mờ phía sau vòng
+            if (glowAlpha > 0f) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            AccentCyan.copy(alpha = (0.10f + 0.12f * pulse) * glowAlpha),
+                            Color.Transparent
+                        ),
+                        radius = radius + strokeWidth.toPx() * (1.2f + pulse)
+                    ),
+                    radius = radius + strokeWidth.toPx() * (1.2f + pulse)
+                )
+            }
+
             // Background track
             drawCircle(
                 color = surfaceColor,
-                radius = (size.toPx() - strokeWidth.toPx()) / 2,
+                radius = radius,
                 style = Stroke(width = strokeWidth.toPx())
             )
 

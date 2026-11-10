@@ -1,6 +1,18 @@
 package com.vunameaut.powertimer.ui.screens
 
-import android.app.TimePickerDialog
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.vunameaut.powertimer.ui.components.DurationPickerSheet
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Arrangement
@@ -70,6 +82,51 @@ fun HomeScreen(
     val context = LocalContext.current
 
     BackHandler(onBack = onBack)
+
+    var showPicker by remember { mutableStateOf(false) }
+    var showStopConfirm by remember { mutableStateOf(false) }
+
+    if (showPicker) {
+        DurationPickerSheet(
+            initialSeconds = selectedSeconds,
+            onDismiss = { showPicker = false },
+            onConfirm = { seconds ->
+                viewModel.setCustomSeconds(seconds)
+                showPicker = false
+            }
+        )
+    }
+
+    if (showStopConfirm) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirm = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = { Icon(Icons.Default.Stop, contentDescription = null, tint = AccentRed) },
+            title = { Text("Hủy hẹn giờ?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Màn hình sẽ không tự tắt nữa. Bạn có chắc muốn dừng bộ đếm đang chạy?",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.stopTimer()
+                        showStopConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Hủy hẹn giờ", fontWeight = FontWeight.Bold, color = Color.White) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirm = false }) {
+                    Text("Giữ lại", color = AccentCyan, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 
     val scrollState = rememberScrollState()
     val presets = listOf(15L, 30L, 45L, 60L, 90L, 120L)
@@ -162,19 +219,7 @@ fun HomeScreen(
                 timeText = currentDisplayTime,
                 isRunning = timerState.isRunning,
                 onClick = {
-                    if (!timerState.isRunning) {
-                        val hours = (selectedSeconds / 3600).toInt()
-                        val minutes = ((selectedSeconds % 3600) / 60).toInt()
-                        TimePickerDialog(
-                            context,
-                            { _, h, m ->
-                                viewModel.setCustomSeconds((h * 3600L) + (m * 60L))
-                            },
-                            hours,
-                            minutes,
-                            true
-                        ).show()
-                    }
+                    if (!timerState.isRunning) showPicker = true
                 }
             )
 
@@ -268,8 +313,16 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Nút bấm chính
-            if (!timerState.isRunning) {
+            // Nút bấm chính (chuyển đổi mượt giữa Bắt đầu ⇄ Đang chạy)
+            AnimatedContent(
+                targetState = timerState.isRunning,
+                transitionSpec = {
+                    (fadeIn(tween(300)) + scaleIn(initialScale = 0.9f, animationSpec = tween(300))) togetherWith
+                        (fadeOut(tween(150)) + scaleOut(targetScale = 0.9f, animationSpec = tween(150)))
+                },
+                label = "main_button"
+            ) { running ->
+            if (!running) {
                 Button(
                     onClick = { viewModel.startTimer() },
                     shape = RoundedCornerShape(16.dp),
@@ -309,7 +362,7 @@ fun HomeScreen(
                     }
 
                     Button(
-                        onClick = { viewModel.stopTimer() },
+                        onClick = { showStopConfirm = true },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
                         modifier = Modifier
@@ -321,6 +374,7 @@ fun HomeScreen(
                         Text(text = "HỦY HẸN GIỜ", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
+            }
             }
         }
     }

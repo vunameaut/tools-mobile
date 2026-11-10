@@ -13,6 +13,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -66,7 +70,14 @@ class MainActivity : ComponentActivity() {
 
                     AnimatedContent(
                         targetState = route,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        transitionSpec = {
+                            val backToHub = targetState == "hub"
+                            val dir = if (backToHub) -1 else 1
+                            (slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { dir * it / 4 } +
+                                fadeIn(tween(380))) togetherWith
+                                (slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -dir * it / 4 } +
+                                    fadeOut(tween(220)))
+                        },
                         label = "root_nav"
                     ) { current ->
                         val tool = ToolRegistry.firstOrNull { "tool:${it.id}" == current }

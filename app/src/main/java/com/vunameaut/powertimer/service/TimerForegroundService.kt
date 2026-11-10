@@ -11,6 +11,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
+import android.widget.RemoteViews
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -344,24 +346,37 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val hours = remainingSeconds / 3600
-        val minutes = (remainingSeconds % 3600) / 60
-        val seconds = remainingSeconds % 60
-        val timeString = if (hours > 0) {
-            String.format("%02d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%02d:%02d", minutes, seconds)
+        val totalSeconds = _timerFlow.value.totalSeconds.coerceAtLeast(1L)
+        val progress = ((remainingSeconds * 100) / totalSeconds).toInt().coerceIn(0, 100)
+
+        // Đồng hồ đếm ngược do hệ thống tự vẽ mỗi giây (không tốn pin cập nhật notification)
+        val views = RemoteViews(packageName, R.layout.notification_timer).apply {
+            setTextViewText(R.id.notif_title, "Hẹn giờ tắt màn hình")
+            setTextViewText(R.id.notif_subtitle, "${mode.badge}  •  Lắc máy để +10 phút")
+            setChronometerCountDown(R.id.notif_chrono, true)
+            setChronometer(
+                R.id.notif_chrono,
+                SystemClock.elapsedRealtime() + remainingSeconds * 1000L,
+                null,
+                true
+            )
+            setProgressBar(R.id.notif_progress, 100, progress, false)
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Hẹn giờ tắt màn hình: $timeString")
-            .setContentText("Chế độ: ${mode.badge} • Lắc máy để +10 phút")
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setColor(0xFF22D3EE.toInt())
+            .setContentTitle("Hẹn giờ tắt màn hình")
+            .setContentText("Chế độ: ${mode.badge}")
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(views)
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(0, "+10 phút", add10mPendingIntent)
-            .addAction(0, "Dừng lại", stopPendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(R.drawable.ic_stat_add, "+10 phút", add10mPendingIntent)
+            .addAction(R.drawable.ic_stat_stop, "Dừng lại", stopPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }

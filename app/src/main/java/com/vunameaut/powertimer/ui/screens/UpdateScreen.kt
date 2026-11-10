@@ -234,3 +234,4 @@ private fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vecto
 }
 
 private fun formatSize(bytes: Long): String = String.format("%.1f MB", bytes / 1024.0 / 1024.0)
+

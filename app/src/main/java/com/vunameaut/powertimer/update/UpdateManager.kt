@@ -152,3 +152,4 @@ object UpdateManager {
         return false
     }
 }
+

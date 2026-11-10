@@ -1,5 +1,21 @@
 package com.vunameaut.powertimer.ui.screens
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -113,8 +129,8 @@ fun HubScreen(
                 )
             }
 
-            items(tools, key = { it.id }) { tool ->
-                ToolCard(tool = tool, onClick = { onOpenTool(tool) })
+            itemsIndexed(tools, key = { _, t -> t.id }) { index, tool ->
+                ToolCard(tool = tool, index = index, onClick = { onOpenTool(tool) })
             }
 
             item { ComingSoonCard() }
@@ -204,10 +220,36 @@ private fun UpdateBanner(updateState: UpdateState, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ToolCard(tool: ToolEntry, onClick: () -> Unit) {
+private fun ToolCard(tool: ToolEntry, index: Int, onClick: () -> Unit) {
+    // Hiệu ứng xuất hiện lần lượt (stagger) + nhún khi nhấn
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(120L + index * 90L)
+        visible = true
+    }
+    val enterAlpha by animateFloatAsState(if (visible) 1f else 0f, tween(450), label = "card_alpha")
+    val enterOffset by animateFloatAsState(
+        if (visible) 0f else 48f,
+        tween(500, easing = FastOutSlowInEasing),
+        label = "card_offset"
+    )
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        if (pressed) 0.95f else 1f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "card_press"
+    )
+
     Column(
         verticalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier
+            .graphicsLayer {
+                alpha = enterAlpha
+                translationY = enterOffset * density
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .aspectRatio(0.95f)
             .clip(RoundedCornerShape(24.dp))
             .background(
@@ -216,7 +258,7 @@ private fun ToolCard(tool: ToolEntry, onClick: () -> Unit) {
                 )
             )
             .border(1.dp, tool.accent.copy(alpha = 0.35f), RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
             .padding(16.dp)
     ) {
         Box(
@@ -273,3 +315,4 @@ private fun ComingSoonCard() {
         )
     }
 }
+

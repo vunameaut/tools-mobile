@@ -1,5 +1,17 @@
 package com.vunameaut.powertimer.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,19 +49,31 @@ fun ModeSelectorCard(
     onSelect: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val borderColor = if (isSelected) AccentCyan else Color.Transparent
-    val backgroundColor = if (isSelected) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
+    val borderColor by animateColorAsState(
+        targetValue = if (isSelected) AccentCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+        animationSpec = tween(300),
+        label = "mode_border"
+    )
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isSelected) AccentCyan.copy(alpha = 0.10f).compositeOver(MaterialTheme.colorScheme.surface)
+        else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(300),
+        label = "mode_bg"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isSelected) 1.02f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "mode_scale"
+    )
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        border = BorderStroke(if (isSelected) 2.dp else 1.dp, if (isSelected) AccentCyan else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor),
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .alpha(if (isAvailable || isSelected) 1f else 0.75f)
             .clickable(onClick = onSelect)
     ) {
         Column(
@@ -88,11 +112,17 @@ fun ModeSelectorCard(
                 }
 
                 if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Selected",
-                        tint = AccentCyan
-                    )
+                    // Icon check xuất hiện với hiệu ứng bật
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = scaleIn(spring(Spring.DampingRatioMediumBouncy)) + fadeIn()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Selected",
+                            tint = AccentCyan
+                        )
+                    }
                 }
             }
 
