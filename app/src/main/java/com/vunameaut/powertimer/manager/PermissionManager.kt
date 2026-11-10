@@ -19,7 +19,16 @@ import java.io.File
 class PermissionManager(private val context: Context) {
 
     fun isAccessibilityServiceEnabled(): Boolean {
-        val expectedComponentName = ComponentName(context, PowerAccessibilityService::class.java).flattenToString()
+        val cn = ComponentName(context, PowerAccessibilityService::class.java)
+        val compState = context.packageManager.getComponentEnabledSetting(cn)
+        if (compState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+            compState == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+        ) {
+            // Trong AndroidManifest.xml mặc định android:enabled="false"
+            if (PowerAccessibilityService.instance == null) return false
+        }
+
+        val expectedComponentName = cn.flattenToString()
         val enabledServices = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -31,7 +40,28 @@ class PermissionManager(private val context: Context) {
     }
 
     fun openAccessibilitySettings() {
+        // Bật Component trước khi mở trang Cài đặt Trợ năng
+        PowerAccessibilityService.setComponentEnabled(context, true)
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    }
+
+    /**
+     * Tắt và ẩn hoàn toàn dịch vụ Trợ năng để tương thích 100% với các ứng dụng Ngân hàng & VNeID.
+     */
+    fun disableAccessibilityForBanking() {
+        PowerAccessibilityService.disableAndHideForBanking(context)
+    }
+
+    fun canWriteSystemSettings(): Boolean {
+        return Settings.System.canWrite(context)
+    }
+
+    fun openWriteSettingsPermission() {
+        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+            data = Uri.parse("package:${context.packageName}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         context.startActivity(intent)
@@ -92,7 +122,7 @@ class PermissionManager(private val context: Context) {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                "Quyền Quản trị viên thiết bị được dùng để khóa màn hình lập tức trong chế độ Ngủ."
+                "Quyền Quản trị viên thiết bị giúp khóa màn hình tức thì mà KHÔNG cần bật Trợ năng (tương thích 100% với App Ngân hàng)."
             )
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }

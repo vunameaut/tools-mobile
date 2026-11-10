@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".PowerTimerApplication"
@@ -75,9 +78,18 @@
                 android:value="Sleep and power off countdown timer service" />
         </service>
 
-        <!-- Accessibility Service for automated power menu dialog interaction (Non-root modern Android) -->
+        <!-- Activity làm tối màn hình OLED 0% & tắt màn hình tự nhiên không cần Trợ năng (Chuẩn Ngân Hàng) -->
+        <activity
+            android:name=".ui.screens.BlackoutSleepActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
+        <!-- Accessibility Service (Mặc định tắt/ẩn Component để App Ngân hàng không quét thấy) -->
         <service
             android:name=".service.PowerAccessibilityService"
+            android:enabled="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">
             <intent-filter>

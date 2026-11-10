@@ -130,8 +130,8 @@ class TimerForegroundService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val seconds = intent.getLongExtra(EXTRA_SECONDS, 1800L)
-                val modeName = intent.getStringExtra(EXTRA_MODE) ?: ShutdownMode.ACCESSIBILITY.name
-                val mode = ShutdownMode.valueOf(modeName)
+                val modeName = intent.getStringExtra(EXTRA_MODE) ?: ShutdownMode.BANK_SAFE_SLEEP.name
+                val mode = runCatching { ShutdownMode.valueOf(modeName) }.getOrDefault(ShutdownMode.BANK_SAFE_SLEEP)
                 val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
                 val enableDnd = intent.getBooleanExtra(EXTRA_DND, true)
                 val playWarning = intent.getBooleanExtra(EXTRA_WARNING, true)

@@ -49,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -80,6 +81,10 @@ fun HomeScreen(
     val selectedMode by viewModel.selectedMode.collectAsState()
     val permissions by viewModel.permissions.collectAsState()
     val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshPermissions()
+    }
 
     BackHandler(onBack = onBack)
 
@@ -202,11 +207,75 @@ fun HomeScreen(
                 .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // Cảnh báo nếu chế độ chọn cần Trợ năng mà chưa bật
-            if (selectedMode.requiresAccessibility && !permissions.isAccessibilityEnabled) {
+            // Nếu máy đang bật Trợ năng từ trước -> Hiển thị nút 1 chạm Tắt & Ẩn ngay lập tức để mở khóa App Ngân hàng!
+            if (permissions.isAccessibilityEnabled) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = AccentRed.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🛡️ Đang bật Trợ năng (Cản trở Ngân hàng)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentRed
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Bấm nút bên cạnh để tắt & ẩn hoàn toàn Trợ năng ngay lập tức, giúp dùng mọi App Ngân hàng & VNeID bình thường!",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Button(
+                            onClick = { viewModel.disableAccessibilityForBanking() },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                        ) {
+                            Text(
+                                text = "Tắt Trợ năng",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Gợi ý cấp quyền tương ứng với chế độ đang chọn
+            if (selectedMode.requiresWriteSettings && !permissions.canWriteSettings) {
+                PermissionItem(
+                    title = "Cấp quyền Hạ thời gian sáng (Chuẩn Ngân Hàng)",
+                    description = "Cho phép ứng dụng tự hạ thời gian chờ màn hình khi hết giờ (100% không dùng Trợ năng, không bị App Ngân hàng chặn, giữ nguyên Vân tay).",
+                    isGranted = false,
+                    onGrantClick = { viewModel.openWriteSettingsPermission() },
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            } else if (selectedMode.requiresDeviceAdmin && !permissions.isDeviceAdminActive) {
+                PermissionItem(
+                    title = "Cần bật Quản trị viên thiết bị",
+                    description = "Khóa màn hình tức thì mà KHÔNG dùng Trợ năng (hoàn toàn không bị App Ngân hàng chặn).",
+                    isGranted = false,
+                    onGrantClick = { viewModel.requestDeviceAdmin() },
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            } else if (selectedMode.requiresAccessibility && !permissions.isAccessibilityEnabled) {
                 PermissionItem(
                     title = "Cần bật Dịch vụ Trợ năng",
-                    description = "Để tắt màn hình mà vẫn giữ vân tay / khuôn mặt, vui lòng bật PowerTimer trong Cài đặt Trợ năng.",
+                    description = "Lưu ý: Dịch vụ sẽ TỰ ĐỘNG TẮT ngay sau khi khóa màn hình 1 giây để không làm gián đoạn App Ngân hàng của bạn.",
                     isGranted = false,
                     onGrantClick = { viewModel.openAccessibilitySettings() },
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -273,11 +342,12 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                ShutdownMode.values().forEach { mode ->
+                ShutdownMode.entries.forEach { mode ->
                     val isAvailable = when (mode) {
-                        ShutdownMode.ACCESSIBILITY, ShutdownMode.HOME_AND_LOCK -> permissions.isAccessibilityEnabled
+                        ShutdownMode.BANK_SAFE_SLEEP -> permissions.canWriteSettings
                         ShutdownMode.DEVICE_ADMIN -> permissions.isDeviceAdminActive
                         ShutdownMode.MEDIA_ONLY -> true
+                        ShutdownMode.ACCESSIBILITY, ShutdownMode.HOME_AND_LOCK -> permissions.isAccessibilityEnabled
                     }
                     ModeSelectorCard(
                         mode = mode,

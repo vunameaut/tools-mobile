@@ -5,7 +5,7 @@ data class TimerState(
     val isPaused: Boolean = false,
     val totalSeconds: Long = 0,
     val remainingSeconds: Long = 0,
-    val selectedMode: ShutdownMode = ShutdownMode.ACCESSIBILITY,
+    val selectedMode: ShutdownMode = ShutdownMode.BANK_SAFE_SLEEP,
     val fadeAudio: Boolean = true,
     val playWarningSound: Boolean = true,
     val turnOnDnd: Boolean = true,

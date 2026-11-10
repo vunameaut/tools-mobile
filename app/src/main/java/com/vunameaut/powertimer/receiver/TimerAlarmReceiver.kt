@@ -32,9 +32,9 @@ class TimerAlarmReceiver : BroadcastReceiver() {
 
             val modeName = intent.getStringExtra(EXTRA_SHUTDOWN_MODE)
             val mode = try {
-                if (modeName != null) ShutdownMode.valueOf(modeName) else ShutdownMode.ACCESSIBILITY
+                if (modeName != null) ShutdownMode.valueOf(modeName) else ShutdownMode.BANK_SAFE_SLEEP
             } catch (_: Exception) {
-                ShutdownMode.ACCESSIBILITY
+                ShutdownMode.BANK_SAFE_SLEEP
             }
 
             val shutdownManager = ShutdownManager(context.applicationContext)

@@ -1396,6 +1396,30 @@ private fun StoryWebViewLoginDialog(
     var loadProgress by remember { mutableIntStateOf(10) }
     var currentUrlDisplay by remember { mutableStateOf(mobileLoginUrl) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var isCompactZoom by remember { mutableStateOf(false) }
+
+    fun applyScrollAndZoomFix(view: WebView?, compact: Boolean) {
+        view?.settings?.textZoom = if (compact) 75 else 90
+        val scaleVal = if (compact) "0.78" else "0.90"
+        val js = """
+            (function() {
+                try {
+                    var style = document.getElementById('__pt_scroll_fix');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = '__pt_scroll_fix';
+                        (document.head || document.documentElement).appendChild(style);
+                    }
+                    style.innerHTML =
+                        'html, body { overflow-y: auto !important; overflow-x: hidden !important; height: auto !important; min-height: 120vh !important; padding-bottom: 260px !important; -webkit-overflow-scrolling: touch !important; } ' +
+                        'div[role="dialog"], div[data-sigil*="dialog"] { max-height: none !important; overflow-y: visible !important; } ' +
+                        'iframe[src*="recaptcha"], iframe[src*="captcha"], iframe[title*="reCAPTCHA"], div[class*="captcha"] { transform: scale($scaleVal) !important; transform-origin: top center !important; margin-bottom: 80px !important; } ' +
+                        ${if (compact) "'body { zoom: 0.80 !important; }'" else "''"};
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        view?.evaluateJavascript(js, null)
+    }
 
     fun checkAndSaveWebViewCookies(showToastIfMissing: Boolean) {
         if (loginCompleted) return
@@ -1438,60 +1462,89 @@ private fun StoryWebViewLoginDialog(
         )
     ) {
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(16.dp),
             color = DarkSurface,
             modifier = Modifier
-                .fillMaxWidth(0.97f)
-                .fillMaxHeight(0.92f)
-                .border(1.dp, OutlineSoft, RoundedCornerShape(20.dp))
+                .fillMaxWidth(0.99f)
+                .fillMaxHeight(0.98f)
+                .border(1.dp, OutlineSoft, RoundedCornerShape(16.dp))
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Header
+                // Ultra-compact Header (Done button moved to top so nothing blocks the bottom of WebView!)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Đăng nhập ${platform.displayName} để tải Story",
+                            text = "Đăng nhập ${platform.displayName}",
                             style = MaterialTheme.typography.titleSmall.copy(
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold
-                            )
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Cookie chỉ lưu cục bộ trên máy bạn để mở khoá tải Story",
+                            text = if (useManualCookieTab) "Dán Cookie thủ công" else currentUrlDisplay,
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = TextSecondary,
-                                fontSize = 11.sp
-                            )
+                                fontSize = 10.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (hasExistingSession) {
-                            TextButton(onClick = onLogout) {
-                                Text("Đăng xuất", color = AccentRed, fontSize = 12.sp)
+                            TextButton(
+                                onClick = onLogout,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Text("Đăng xuất", color = AccentRed, fontSize = 11.sp)
                             }
                         }
-                        IconButton(onClick = onDismiss) {
+                        if (!useManualCookieTab) {
+                            Button(
+                                onClick = { checkAndSaveWebViewCookies(showToastIfMissing = true) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentGreen,
+                                    contentColor = Color.Black
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Text("✓ Đã xong", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                            }
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(30.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Rounded.Clear,
                                 contentDescription = "Đóng",
-                                tint = TextSecondary
+                                tint = TextSecondary,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
                 }
 
-                // Mode Switcher Bar (WebView Mobile / WebView Desktop / Manual Cookie)
+                // Mode Switcher Bar (WebView Mobile / WebView Desktop / Zoom Out / Manual Cookie)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val tab1Selected = !useManualCookieTab && !useDesktopSite
@@ -1508,18 +1561,19 @@ private fun StoryWebViewLoginDialog(
                                 loadUrl(mobileLoginUrl)
                             }
                         },
-                        modifier = Modifier.weight(1f).height(34.dp),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1f).height(30.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
                         border = BorderStroke(
                             1.dp,
                             if (tab1Selected) AccentCyan else OutlineSoft
                         )
                     ) {
                         Text(
-                            text = "📱 Đăng nhập",
-                            fontSize = 11.sp,
+                            text = "📱 Mobile",
+                            fontSize = 10.5.sp,
                             color = if (tab1Selected) AccentCyan else TextSecondary,
-                            fontWeight = if (tab1Selected) FontWeight.Bold else FontWeight.Normal
+                            fontWeight = if (tab1Selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1
                         )
                     }
 
@@ -1533,8 +1587,8 @@ private fun StoryWebViewLoginDialog(
                                 loadUrl(desktopLoginUrl)
                             }
                         },
-                        modifier = Modifier.weight(1f).height(34.dp),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1f).height(30.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
                         border = BorderStroke(
                             1.dp,
                             if (tab2Selected) AccentCyan else OutlineSoft
@@ -1542,39 +1596,64 @@ private fun StoryWebViewLoginDialog(
                     ) {
                         Text(
                             text = "💻 Bản Web",
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             color = if (tab2Selected) AccentCyan else TextSecondary,
-                            fontWeight = if (tab2Selected) FontWeight.Bold else FontWeight.Normal
+                            fontWeight = if (tab2Selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1
                         )
+                    }
+
+                    if (!useManualCookieTab) {
+                        OutlinedButton(
+                            onClick = {
+                                isCompactZoom = !isCompactZoom
+                                applyScrollAndZoomFix(webViewRef, isCompactZoom)
+                            },
+                            modifier = Modifier.height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 1.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isCompactZoom) AccentGreen else OutlineSoft
+                            )
+                        ) {
+                            Text(
+                                text = if (isCompactZoom) "🔍 100%" else "🔍 Thu nhỏ",
+                                fontSize = 10.5.sp,
+                                color = if (isCompactZoom) AccentGreen else TextSecondary,
+                                fontWeight = if (isCompactZoom) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1
+                            )
+                        }
                     }
 
                     OutlinedButton(
                         onClick = { useManualCookieTab = true },
-                        modifier = Modifier.weight(1f).height(34.dp),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1f).height(30.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
                         border = BorderStroke(
                             1.dp,
                             if (tab3Selected) AccentAmber else OutlineSoft
                         )
                     ) {
                         Text(
-                            text = "📋 Dán Cookie",
-                            fontSize = 11.sp,
+                            text = "📋 Cookie",
+                            fontSize = 10.5.sp,
                             color = if (tab3Selected) AccentAmber else TextSecondary,
-                            fontWeight = if (tab3Selected) FontWeight.Bold else FontWeight.Normal
+                            fontWeight = if (tab3Selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1
                         )
                     }
 
                     if (!useManualCookieTab) {
                         IconButton(
                             onClick = { webViewRef?.reload() },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
                                 contentDescription = "Tải lại",
                                 tint = AccentCyan,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
@@ -1668,29 +1747,17 @@ private fun StoryWebViewLoginDialog(
                             progress = { loadProgress / 100f },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(3.dp),
+                                .height(2.dp),
                             color = AccentCyan,
                             trackColor = DarkSurfaceVariant
                         )
                     }
-                    Text(
-                        text = currentUrlDisplay,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = TextSecondary,
-                            fontSize = 10.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(DarkSurfaceVariant.copy(alpha = 0.5f))
-                            .padding(horizontal = 12.dp, vertical = 3.dp)
-                    )
 
                     AndroidView(
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)),
                         factory = { ctx ->
                             WebView(ctx).apply {
                                 layoutParams = ViewGroup.LayoutParams(
@@ -1699,6 +1766,8 @@ private fun StoryWebViewLoginDialog(
                                 )
                                 isFocusable = true
                                 isFocusableInTouchMode = true
+                                isVerticalScrollBarEnabled = true
+                                isHorizontalScrollBarEnabled = true
                                 settings.apply {
                                     javaScriptEnabled = true
                                     domStorageEnabled = true
@@ -1706,6 +1775,10 @@ private fun StoryWebViewLoginDialog(
                                     loadsImagesAutomatically = true
                                     useWideViewPort = true
                                     loadWithOverviewMode = true
+                                    setSupportZoom(true)
+                                    builtInZoomControls = true
+                                    displayZoomControls = false
+                                    textZoom = 92
                                     javaScriptCanOpenWindowsAutomatically = true
                                     mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                                     val defaultUa = WebSettings.getDefaultUserAgent(ctx)
@@ -1721,6 +1794,9 @@ private fun StoryWebViewLoginDialog(
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                         super.onProgressChanged(view, newProgress)
                                         loadProgress = newProgress
+                                        if (newProgress >= 85) {
+                                            applyScrollAndZoomFix(view, isCompactZoom)
+                                        }
                                     }
                                 }
 
@@ -1741,6 +1817,7 @@ private fun StoryWebViewLoginDialog(
                                         if (!url.isNullOrBlank()) {
                                             currentUrlDisplay = url
                                         }
+                                        applyScrollAndZoomFix(view, isCompactZoom)
                                         checkAndSaveWebViewCookies(showToastIfMissing = false)
                                     }
 
@@ -1768,36 +1845,6 @@ private fun StoryWebViewLoginDialog(
                             }
                         }
                     )
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(DarkSurface)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Sau khi đăng nhập xong hệ thống sẽ tự lưu, hoặc bấm:",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = TextSecondary,
-                                fontSize = 11.sp
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { checkAndSaveWebViewCookies(showToastIfMissing = true) },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AccentGreen,
-                                contentColor = Color.Black
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("✓ Đã đăng nhập xong", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
                 }
             }
         }

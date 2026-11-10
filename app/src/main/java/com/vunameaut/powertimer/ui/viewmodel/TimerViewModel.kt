@@ -1,6 +1,7 @@
 package com.vunameaut.powertimer.ui.viewmodel
 
 import android.app.Application
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.data.model.TimerState
@@ -15,7 +16,8 @@ data class PermissionStatusState(
     val isAccessibilityEnabled: Boolean = false,
     val isBatteryOptimizationIgnored: Boolean = false,
     val canScheduleExactAlarm: Boolean = false,
-    val isDeviceAdminActive: Boolean = false
+    val isDeviceAdminActive: Boolean = false,
+    val canWriteSettings: Boolean = false
 )
 
 class TimerViewModel(application: Application) : AndroidViewModel(application) {
@@ -26,7 +28,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedSeconds = MutableStateFlow(1800L) // Mặc định 30 phút
     val selectedSeconds: StateFlow<Long> = _selectedSeconds.asStateFlow()
 
-    private val _selectedMode = MutableStateFlow(ShutdownMode.ACCESSIBILITY)
+    // Mặc định dùng chế độ Chuẩn Ngân Hàng (Không yêu cầu bật Trợ năng!)
+    private val _selectedMode = MutableStateFlow(ShutdownMode.BANK_SAFE_SLEEP)
     val selectedMode: StateFlow<ShutdownMode> = _selectedMode.asStateFlow()
 
     private val _fadeAudio = MutableStateFlow(true)
@@ -57,7 +60,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
             isAccessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(),
             isBatteryOptimizationIgnored = permissionManager.isIgnoringBatteryOptimizations(),
             canScheduleExactAlarm = permissionManager.canScheduleExactAlarms(),
-            isDeviceAdminActive = permissionManager.isDeviceAdminActive()
+            isDeviceAdminActive = permissionManager.isDeviceAdminActive(),
+            canWriteSettings = permissionManager.canWriteSystemSettings()
         )
     }
 
@@ -75,6 +79,24 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMode(mode: ShutdownMode) {
         _selectedMode.value = mode
+        // Nếu người dùng chọn chế độ Chuẩn Ngân Hàng, tự động tắt/ẩn Trợ năng nếu đang bật
+        if (!mode.requiresAccessibility) {
+            permissionManager.disableAccessibilityForBanking()
+            refreshPermissions()
+        }
+    }
+
+    fun disableAccessibilityForBanking() {
+        permissionManager.disableAccessibilityForBanking()
+        if (_selectedMode.value.requiresAccessibility) {
+            _selectedMode.value = ShutdownMode.BANK_SAFE_SLEEP
+        }
+        refreshPermissions()
+        Toast.makeText(
+            getApplication(),
+            "Đã tắt & ẩn hoàn toàn Trợ năng! Bạn có thể dùng mọi App Ngân hàng bình thường.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     fun toggleFadeAudio(enabled: Boolean) {
@@ -115,6 +137,7 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     // Permission navigation helpers
     fun openAccessibilitySettings() = permissionManager.openAccessibilitySettings()
+    fun openWriteSettingsPermission() = permissionManager.openWriteSettingsPermission()
     fun requestBatteryOptimization() = permissionManager.requestIgnoreBatteryOptimizations()
     fun openExactAlarmSettings() = permissionManager.openExactAlarmSettings()
     fun requestDeviceAdmin() = permissionManager.requestDeviceAdmin()

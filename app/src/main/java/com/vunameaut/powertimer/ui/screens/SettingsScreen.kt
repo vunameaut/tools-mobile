@@ -146,7 +146,7 @@ fun SettingsScreen(
 
             // Danh sách quyền cho Android đời cao
             Text(
-                text = "Quyền hạn hệ thống (Android 11 - 15+)",
+                text = "Quyền hạn hệ thống (Tương thích 100% App Ngân hàng)",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -155,7 +155,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Để tắt màn hình êm ái mà vẫn giữ nguyên mở khóa Vân tay / Khuôn mặt:",
+                text = "Các quyền dưới đây giúp hẹn giờ tắt màn hình chuẩn xác mà KHÔNG dùng Trợ năng (không bao giờ bị App Ngân hàng hay VNeID chặn):",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
             )
@@ -163,16 +163,24 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             PermissionItem(
-                title = "Dịch vụ Trợ năng (Accessibility)",
-                description = "Bắt buộc để tắt màn hình tự nhiên mà không làm mất tính năng mở khóa bằng Vân tay / Khuôn mặt.",
-                isGranted = permissions.isAccessibilityEnabled,
-                onGrantClick = { viewModel.openAccessibilitySettings() },
+                title = "Hạ thời gian sáng màn hình (Chuẩn Ngân Hàng)",
+                description = "Khuyên dùng số 1: Tự động làm tối và tắt màn hình tự nhiên, giữ nguyên mở khóa Vân tay / Khuôn mặt mà không cần Trợ năng.",
+                isGranted = permissions.canWriteSettings,
+                onGrantClick = { viewModel.openWriteSettingsPermission() },
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
+            PermissionItem(
+                title = "Quản trị viên thiết bị (Khóa tức thì)",
+                description = "Khóa màn hình ngay lập tức 0.1s mà không dùng Trợ năng (lần mở máy tiếp theo có thể cần nhập mã PIN).",
+                isGranted = permissions.isDeviceAdminActive,
+                onGrantClick = { viewModel.requestDeviceAdmin() },
                 modifier = Modifier.padding(vertical = 4.dp)
             )
 
             PermissionItem(
                 title = "Tắt tối ưu hóa pin",
-                description = "Ngăn chặn hệ điều hành (Samsung, Xiaomi, Pixel...) ngắt đồng hồ đếm ngược khi máy ngủ sâu.",
+                description = "Ngăn chặn hệ điều hành (Samsung, Xiaomi, OPPO, Vivo...) ngắt đồng hồ đếm ngược khi máy ngủ sâu.",
                 isGranted = permissions.isBatteryOptimizationIgnored,
                 onGrantClick = { viewModel.requestBatteryOptimization() },
                 modifier = Modifier.padding(vertical = 4.dp)
@@ -187,10 +195,24 @@ fun SettingsScreen(
             )
 
             PermissionItem(
-                title = "Quản trị viên thiết bị",
-                description = "Phương thức thay thế nếu bạn không muốn bật Trợ năng (Lưu ý: sẽ yêu cầu nhập mã PIN khi mở lại).",
-                isGranted = permissions.isDeviceAdminActive,
-                onGrantClick = { viewModel.requestDeviceAdmin() },
+                title = if (permissions.isAccessibilityEnabled) {
+                    "Trợ năng đang BẬT (Bấm vào để Tắt cho Ngân hàng)"
+                } else {
+                    "Dịch vụ Trợ năng (Đã tắt để bảo vệ Ngân hàng)"
+                },
+                description = if (permissions.isAccessibilityEnabled) {
+                    "Đang bật Trợ năng có thể khiến App Ngân hàng báo lỗi. Hãy chuyển sang chế độ Chuẩn Ngân Hàng phía trên."
+                } else {
+                    "Đã ẩn hoàn toàn dịch vụ Trợ năng khỏi hệ thống để các ứng dụng Ngân hàng hoạt động mượt mà."
+                },
+                isGranted = !permissions.isAccessibilityEnabled,
+                onGrantClick = {
+                    if (permissions.isAccessibilityEnabled) {
+                        viewModel.disableAccessibilityForBanking()
+                    } else {
+                        viewModel.openAccessibilitySettings()
+                    }
+                },
                 modifier = Modifier.padding(vertical = 4.dp)
             )
         }
