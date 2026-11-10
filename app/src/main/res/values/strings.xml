@@ -1,5 +1,5 @@
-<resources>
-    <string name="app_name">PowerTimer</string>
+﻿<resources>
+    <string name="app_name">Tools Hub</string>
     <string name="accessibility_service_name">PowerTimer Tắt Màn Hình</string>
     <string name="accessibility_service_description">Dịch vụ hỗ trợ tiếp cận giúp tự động tắt và khóa màn hình khi hết giờ đếm ngược mà vẫn giữ nguyên tính năng mở khóa bằng Vân tay / Khuôn mặt (tương thích Android 9, 10, 11, 12, 13, 14, 15+).</string>
     <string name="notification_channel_name">PowerTimer Đếm Ngược</string>

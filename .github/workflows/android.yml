@@ -1,11 +1,14 @@
-name: Android CI Build
+name: Build & Release APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -26,12 +29,39 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Compute version
+        id: ver
+        run: |
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "name=1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Debug APK
+      - name: Decode keystore
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> "$GITHUB_ENV"
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease -PappVersionCode=${{ steps.ver.outputs.code }} -PappVersionName=${{ steps.ver.outputs.name }} --stacktrace
+
+      - name: Rename APK
+        run: mv app/build/outputs/apk/release/*.apk ToolsHub-v${{ steps.ver.outputs.name }}.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PowerTimer-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: ToolsHub-APK
+          path: ToolsHub-v${{ steps.ver.outputs.name }}.apk
           retention-days: 14
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: Tools Hub v${{ steps.ver.outputs.name }}
+          body: ${{ github.event.head_commit.message }}
+          files: ToolsHub-v${{ steps.ver.outputs.name }}.apk
+          make_latest: true

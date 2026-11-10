@@ -1,6 +1,8 @@
 package com.vunameaut.powertimer.ui.screens
 
 import android.app.TimePickerDialog
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +59,7 @@ import com.vunameaut.powertimer.ui.viewmodel.TimerViewModel
 @Composable
 fun HomeScreen(
     viewModel: TimerViewModel,
+    onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -65,6 +68,8 @@ fun HomeScreen(
     val selectedMode by viewModel.selectedMode.collectAsState()
     val permissions by viewModel.permissions.collectAsState()
     val context = LocalContext.current
+
+    BackHandler(onBack = onBack)
 
     val scrollState = rememberScrollState()
     val presets = listOf(15L, 30L, 45L, 60L, 90L, 120L)
@@ -104,6 +109,15 @@ fun HomeScreen(
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Về Tools Hub",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 },
                 actions = {
