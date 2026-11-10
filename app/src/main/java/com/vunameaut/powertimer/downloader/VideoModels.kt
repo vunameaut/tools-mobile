@@ -38,7 +38,7 @@ enum class VideoPlatform(
         hostKeywords = listOf("threads.net", "threads.com")
     ),
     OTHER(
-        displayName = "Web Video",
+        displayName = "Web Media",
         badgeColor = Color(0xFF22D3EE),
         hostKeywords = emptyList()
     );
@@ -64,6 +64,54 @@ enum class VideoPlatform(
     }
 }
 
+enum class MediaType {
+    VIDEO,
+    AUDIO,
+    IMAGE
+}
+
+enum class DownloadPreference(
+    val title: String,
+    val shortLabel: String
+) {
+    AUTO_HD("Video HD / Full Ảnh", "🎬 HD / Full Ảnh"),
+    VIDEO_SD("Video SD (Nhẹ máy)", "🎞️ Video SD"),
+    AUDIO_MP3("Nhạc MP3 / Audio", "🎵 Nhạc MP3"),
+    ASK_FORMAT("Hỏi chất lượng mỗi lần", "🎛️ Tự chọn")
+}
+
+data class VideoFormatOption(
+    val id: String,
+    val label: String,
+    val qualityBadge: String,
+    val downloadUrl: String,
+    val mediaType: MediaType = MediaType.VIDEO,
+    val ext: String = "mp4",
+    val extractAudioFromVideo: Boolean = false,
+    val headers: Map<String, String> = emptyMap(),
+    val sizeBytes: Long = 0L
+)
+
+data class ExtractedMediaItem(
+    val url: String,
+    val mediaType: MediaType,
+    val ext: String = when (mediaType) {
+        MediaType.IMAGE -> "jpg"
+        MediaType.AUDIO -> "mp3"
+        MediaType.VIDEO -> "mp4"
+    },
+    val titleSuffix: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    val headers: Map<String, String> = emptyMap()
+)
+
+class StoryLoginRequiredException(
+    val platform: VideoPlatform,
+    val storyUrl: String,
+    message: String = "Story ${platform.displayName} yêu cầu đăng nhập 1 lần để xem & tải. Hãy bấm nút \"Đăng nhập ${platform.displayName}\" bên dưới để tải tự động!"
+) : IllegalStateException(message)
+
 data class ExtractedVideo(
     val sourceUrl: String,
     val downloadUrl: String,
@@ -73,7 +121,10 @@ data class ExtractedVideo(
     val thumbnailUrl: String = "",
     val headers: Map<String, String> = emptyMap(),
     val platform: VideoPlatform = VideoPlatform.detect(sourceUrl),
-    val engineUsed: String = "On-Device Direct"
+    val engineUsed: String = "On-Device Direct",
+    val mediaType: MediaType = MediaType.VIDEO,
+    val formats: List<VideoFormatOption> = emptyList(),
+    val mediaItems: List<ExtractedMediaItem> = emptyList()
 )
 
 enum class DownloadStatus {
@@ -88,7 +139,7 @@ data class DownloadTaskState(
     val id: String,
     val sourceUrl: String,
     val platform: VideoPlatform,
-    val title: String = "Đang phân tích link video...",
+    val title: String = "Đang phân tích link...",
     val author: String = "",
     val engineUsed: String = "Trực tiếp trên thiết bị",
     val status: DownloadStatus = DownloadStatus.EXTRACTING,
@@ -96,10 +147,15 @@ data class DownloadTaskState(
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val speedBytesPerSec: Long = 0L,
+    val mediaType: MediaType = MediaType.VIDEO,
+    val qualityLabel: String = "",
+    val totalItems: Int = 1,
+    val completedItems: Int = 0,
     val savedUri: String? = null,
+    val savedUris: List<String> = emptyList(),
     val savedFilePath: String? = null,
     val savedFileName: String? = null,
     val errorMessage: String? = null,
+    val requiresLogin: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
-

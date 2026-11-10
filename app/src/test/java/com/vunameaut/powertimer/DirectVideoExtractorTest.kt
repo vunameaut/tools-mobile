@@ -2,7 +2,9 @@ package com.vunameaut.powertimer
 
 import com.vunameaut.powertimer.downloader.DirectVideoExtractor
 import com.vunameaut.powertimer.downloader.ExtractedVideo
+import com.vunameaut.powertimer.downloader.MediaType
 import com.vunameaut.powertimer.downloader.VideoPlatform
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -14,6 +16,7 @@ class DirectVideoExtractorTest {
 
     private fun verifyMp4Stream(extracted: ExtractedVideo) {
         println("Testing stream for [${extracted.platform.displayName}] (${extracted.engineUsed}): ${extracted.title}")
+        println(" -> Formats available (${extracted.formats.size}): ${extracted.formats.map { it.label }}")
         println(" -> Stream URL: ${extracted.downloadUrl.take(100)}...")
 
         var currentUrl = extracted.downloadUrl
@@ -48,7 +51,7 @@ class DirectVideoExtractorTest {
     }
 
     @Test
-    fun testShareTextUrlExtractionAndPlatformDetection() {
+    fun testShareTextUrlExtractionAndStoryLoginRedirectUnwrap() {
         val tiktokShare = "Xem video này cực hay trên TikTok nhé! https://vt.tiktok.com/ZSY12345/."
         val extracted = VideoPlatform.extractFirstUrl(tiktokShare)
         assertEquals("https://vt.tiktok.com/ZSY12345/", extracted)
@@ -58,45 +61,58 @@ class DirectVideoExtractorTest {
         val fbUrl = VideoPlatform.extractFirstUrl(fbShare)
         assertEquals("https://fb.watch/abcXYZ123/", fbUrl)
         assertEquals(VideoPlatform.FACEBOOK, VideoPlatform.detect(fbUrl!!))
+
+        val fbStoryLoginRedirect =
+            "https://www.facebook.com/login.php?next=https%3A%2F%2Fwww.facebook.com%2Fstories%2F122093215118530826%2FUzpfSVNDOjI5MjcwNzk1MjAyNTYwMzg2%2F%3Fview_single%3D1"
+        val unwrapped = DirectVideoExtractor.unwrapLoginRedirectUrl(fbStoryLoginRedirect)
+        assertTrue(
+            "Should unwrap login.php?next= to the real /stories/ URL",
+            unwrapped.startsWith("https://www.facebook.com/stories/122093215118530826/")
+        )
     }
 
     @Test
-    fun testTikTokDirectExtractionAndDownload() {
+    fun testTikTokDirectExtractionAndMultiFormat() {
         val res = DirectVideoExtractor.extractTikTokDirect("https://www.tiktok.com/@tiktok/video/7106594312292453675")
         assertNotNull("TikTok direct extraction should succeed", res)
-        verifyMp4Stream(res!!)
+        assertTrue("TikTok should provide multiple formats (HD/SD/MP3)", res!!.formats.size >= 2)
+        assertTrue("TikTok should include an AUDIO format", res.formats.any { it.mediaType == MediaType.AUDIO })
+        verifyMp4Stream(res)
     }
 
     @Test
-    fun testFacebookDirectExtractionAndDownload() {
+    fun testFacebookDirectExtractionAndDownload() = runBlocking {
         val res = DirectVideoExtractor.extractFacebookDirect("https://www.facebook.com/facebookapp/videos/10153231379946729/")
         assertNotNull("Facebook direct extraction should succeed", res)
-        verifyMp4Stream(res!!)
+        assertTrue("Facebook should include an AUDIO format option", res!!.formats.any { it.mediaType == MediaType.AUDIO })
+        verifyMp4Stream(res)
     }
 
     @Test
-    fun testInstagramReelAndPostDirectExtractionAndDownload() {
+    fun testInstagramReelAndMultiPhotoCarouselExtraction() = runBlocking {
         val reel = DirectVideoExtractor.extractInstagramDirect("https://www.instagram.com/reel/Chunk8-jurw/")
         assertNotNull("Instagram Reel direct extraction should succeed", reel)
         verifyMp4Stream(reel!!)
 
-        val post = DirectVideoExtractor.extractInstagramDirect("https://www.instagram.com/p/BQ0eAlwhDrw/")
-        assertNotNull("Instagram Post direct extraction should succeed", post)
-        verifyMp4Stream(post!!)
+        val carousel = DirectVideoExtractor.extractInstagramDirect("https://www.instagram.com/p/BQ0eAlwhDrw/")
+        assertNotNull("Instagram Multi-Photo Carousel extraction should succeed", carousel)
+        println("Instagram Carousel items (${carousel!!.mediaItems.size}): ${carousel.mediaItems.map { it.titleSuffix }}")
+        assertTrue("Instagram Carousel should contain multiple items", carousel.mediaItems.size >= 2)
     }
 
     @Test
     fun testTwitterDirectExtractionAndDownload() {
         val res = DirectVideoExtractor.extractTwitterDirect("https://x.com/MesoMax919/status/1575560063510810624")
         assertNotNull("X/Twitter direct extraction should succeed", res)
-        verifyMp4Stream(res!!)
+        assertTrue("Twitter should include multiple format options", res!!.formats.size >= 2)
+        verifyMp4Stream(res)
     }
 
     @Test
     fun testYouTubeDirectExtractionAndDownload() {
         val res = DirectVideoExtractor.extractYouTubeDirect("https://www.youtube.com/watch?v=jNQXAC9IVRw")
         assertNotNull("YouTube direct extraction should succeed", res)
-        verifyMp4Stream(res!!)
+        assertTrue("YouTube should include video and audio format options", res!!.formats.size >= 2)
+        verifyMp4Stream(res)
     }
 }
-

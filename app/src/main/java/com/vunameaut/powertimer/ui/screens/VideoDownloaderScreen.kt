@@ -1,9 +1,14 @@
 package com.vunameaut.powertimer.ui.screens
 
+import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -13,6 +18,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,9 +30,11 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,25 +42,34 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -71,6 +88,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -86,9 +104,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.vunameaut.powertimer.downloader.DirectVideoExtractor
+import com.vunameaut.powertimer.downloader.DownloadPreference
 import com.vunameaut.powertimer.downloader.DownloadStatus
 import com.vunameaut.powertimer.downloader.DownloadTaskState
+import com.vunameaut.powertimer.downloader.ExtractedMediaItem
+import com.vunameaut.powertimer.downloader.ExtractedVideo
+import com.vunameaut.powertimer.downloader.MediaType
+import com.vunameaut.powertimer.downloader.StoryLoginRequiredException
+import com.vunameaut.powertimer.downloader.VideoFormatOption
 import com.vunameaut.powertimer.downloader.VideoPlatform
 import com.vunameaut.powertimer.service.VideoDownloadService
 import com.vunameaut.powertimer.ui.theme.AccentAmber
@@ -121,16 +148,35 @@ fun VideoDownloaderTool(
 
     val tasks by VideoDownloadService.tasks.collectAsState()
     var urlInput by rememberSaveable { mutableStateOf("") }
+    var selectedPreference by remember {
+        mutableStateOf(DirectVideoExtractor.getDownloadPreference(context))
+    }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var serverUrlInput by remember { mutableStateOf(DirectVideoExtractor.getServerUrl(context)) }
     var isUpdatingYtdlp by remember { mutableStateOf(false) }
+
+    // Format / Quality Picker state
+    var isInspectingFormats by remember { mutableStateOf(false) }
+    var extractedForPicker by remember { mutableStateOf<ExtractedVideo?>(null) }
+
+    // Story Login WebView dialog state
+    var loginDialogPlatform by remember { mutableStateOf<VideoPlatform?>(null) }
+    var pendingRetryUrlAfterLogin by remember { mutableStateOf<String?>(null) }
+    var loginStatusTick by remember { mutableIntStateOf(0) }
+
+    val fbLoggedIn = remember(loginStatusTick) {
+        DirectVideoExtractor.hasPlatformLogin(context, VideoPlatform.FACEBOOK)
+    }
+    val igLoggedIn = remember(loginStatusTick) {
+        DirectVideoExtractor.hasPlatformLogin(context, VideoPlatform.INSTAGRAM)
+    }
 
     val detectedPlatform = remember(urlInput) {
         val extracted = VideoPlatform.extractFirstUrl(urlInput)
         if (extracted != null) VideoPlatform.detect(extracted) else null
     }
 
-    fun triggerDownload(rawText: String) {
+    fun inspectAndPickFormat(rawText: String) {
         val validUrl = VideoPlatform.extractFirstUrl(rawText)
         if (validUrl.isNullOrBlank()) {
             Toast.makeText(
@@ -140,11 +186,60 @@ fun VideoDownloaderTool(
             ).show()
             return
         }
-        VideoDownloadService.startDownload(context, validUrl)
+        if (isInspectingFormats) return
+        isInspectingFormats = true
+        scope.launch {
+            val res = DirectVideoExtractor.extract(context, validUrl)
+            isInspectingFormats = false
+            res.fold(
+                onSuccess = { extracted ->
+                    extractedForPicker = extracted
+                },
+                onFailure = { err ->
+                    if (err is StoryLoginRequiredException) {
+                        pendingRetryUrlAfterLogin = validUrl
+                        loginDialogPlatform = err.platform
+                        Toast.makeText(
+                            context,
+                            "Story yêu cầu đăng nhập ${err.platform.displayName} 1 lần để tải!",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            context,
+                            err.message ?: "Không thể phân tích link này",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            )
+        }
+    }
+
+    fun triggerDownload(rawText: String, forceAskFormat: Boolean = false) {
+        val validUrl = VideoPlatform.extractFirstUrl(rawText)
+        if (validUrl.isNullOrBlank()) {
+            Toast.makeText(
+                context,
+                "Vui lòng dán đường link hợp lệ (TikTok, Facebook, Instagram, YouTube, X...)",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        if (forceAskFormat || selectedPreference == DownloadPreference.ASK_FORMAT) {
+            inspectAndPickFormat(validUrl)
+            return
+        }
+        VideoDownloadService.startDownload(context, validUrl, selectedPreference)
         urlInput = ""
+        val modeLabel = when (selectedPreference) {
+            DownloadPreference.AUDIO_MP3 -> "nhạc MP3"
+            DownloadPreference.VIDEO_SD -> "video SD"
+            else -> "video/ảnh HD"
+        }
         Toast.makeText(
             context,
-            "Đang bắt đầu tải video ${VideoPlatform.detect(validUrl).displayName}...",
+            "Đang tải $modeLabel từ ${VideoPlatform.detect(validUrl).displayName}...",
             Toast.LENGTH_SHORT
         ).show()
     }
@@ -182,7 +277,10 @@ fun VideoDownloaderTool(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         IconButton(
                             onClick = onExit,
                             modifier = Modifier
@@ -200,14 +298,14 @@ fun VideoDownloaderTool(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Tải Video Đa Nền Tảng",
+                                text = "Tải Video & Ảnh Đa Năng",
                                 style = MaterialTheme.typography.titleLarge.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
                                 )
                             )
                             Text(
-                                text = "Tự động giải mã trực tiếp trên máy • Không logo",
+                                text = "Video HD/SD • Nhạc MP3 • Full Album Ảnh • Story",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = TextSecondary
                                 )
@@ -215,27 +313,29 @@ fun VideoDownloaderTool(
                         }
                     }
 
-                    IconButton(
-                        onClick = {
-                            serverUrlInput = DirectVideoExtractor.getServerUrl(context)
-                            showSettingsDialog = true
-                        },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(DarkSurface)
-                            .border(1.dp, OutlineSoft, CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Cài đặt",
-                            tint = AccentCyan
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(
+                            onClick = {
+                                serverUrlInput = DirectVideoExtractor.getServerUrl(context)
+                                showSettingsDialog = true
+                            },
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(DarkSurface)
+                                .border(1.dp, OutlineSoft, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = "Cài đặt",
+                                tint = AccentCyan
+                            )
+                        }
                     }
                 }
             }
 
-            // Engine Banner + Share Guide Card
+            // Engine Banner + Story Account Status
             item {
                 Surface(
                     shape = RoundedCornerShape(20.dp),
@@ -274,14 +374,14 @@ fun VideoDownloaderTool(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Chế độ Trích Xuất Nhanh + Cloud Server API",
+                                    text = "Hỗ trợ Video nhiều chất lượng, MP3 & Full Album Ảnh",
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         color = AccentGreen,
                                         fontWeight = FontWeight.Bold
                                     )
                                 )
                                 Text(
-                                    text = "Siêu nhẹ (~10MB) • Tải trực tiếp kết hợp Server API Online",
+                                    text = "Tự động tải trọn bộ ảnh Carousel (IG/TikTok/FB/X) • Tách nhạc MP3 siêu tốc",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = TextSecondary,
                                         fontSize = 11.5.sp
@@ -306,29 +406,45 @@ fun VideoDownloaderTool(
                             }
                         }
 
-                        Box(
+                        // Story Account Quick Bar (FB & IG Stories)
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(DarkSurfaceVariant.copy(alpha = 0.7f))
-                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                                .background(DarkSurfaceVariant.copy(alpha = 0.65f))
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.Share,
+                                    imageVector = Icons.Rounded.Key,
                                     contentDescription = null,
-                                    tint = AccentCyan,
+                                    tint = AccentAmber,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "Mẹo nhanh: Từ TikTok, FB, IG, YouTube bấm \"Chia sẻ\" → chọn \"Tải Video (Tools Hub)\" để tự động tải ngầm kèm thông báo!",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = TextPrimary.copy(alpha = 0.9f),
-                                        fontSize = 11.5.sp
+                                    text = "Tải Story:",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold
                                     )
+                                )
+                                StoryLoginChip(
+                                    label = if (fbLoggedIn) "FB Story ✓" else "Đăng nhập FB",
+                                    isLoggedIn = fbLoggedIn,
+                                    accentColor = VideoPlatform.FACEBOOK.badgeColor,
+                                    onClick = { loginDialogPlatform = VideoPlatform.FACEBOOK }
+                                )
+                                StoryLoginChip(
+                                    label = if (igLoggedIn) "IG Story ✓" else "Đăng nhập IG",
+                                    isLoggedIn = igLoggedIn,
+                                    accentColor = VideoPlatform.INSTAGRAM.badgeColor,
+                                    onClick = { loginDialogPlatform = VideoPlatform.INSTAGRAM }
                                 )
                             }
                         }
@@ -336,7 +452,7 @@ fun VideoDownloaderTool(
                 }
             }
 
-            // URL Input & Action Card
+            // URL Input, Mode Selector & Action Card
             item {
                 Surface(
                     shape = RoundedCornerShape(22.dp),
@@ -355,7 +471,7 @@ fun VideoDownloaderTool(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Đường dẫn Video (URL)",
+                                text = "Đường dẫn Video / Story / Bài Ảnh",
                                 style = MaterialTheme.typography.titleSmall.copy(
                                     color = TextPrimary,
                                     fontWeight = FontWeight.SemiBold
@@ -372,7 +488,7 @@ fun VideoDownloaderTool(
                             modifier = Modifier.fillMaxWidth(),
                             placeholder = {
                                 Text(
-                                    text = "Dán link TikTok, Facebook, Instagram, YouTube, X...",
+                                    text = "Dán link Video, Story, Reels hoặc bài đăng nhiều ảnh...",
                                     color = TextSecondary.copy(alpha = 0.7f),
                                     fontSize = 13.5.sp
                                 )
@@ -407,6 +523,58 @@ fun VideoDownloaderTool(
                             )
                         )
 
+                        // Format / Quality Preference Selector
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Chế độ tải mặc định (áp dụng cả khi bấm Chia sẻ từ app khác):",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = TextSecondary,
+                                    fontSize = 11.5.sp
+                                )
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DownloadPreference.entries.forEach { pref ->
+                                    val isSelected = selectedPreference == pref
+                                    val chipColor = when (pref) {
+                                        DownloadPreference.AUTO_HD -> AccentGreen
+                                        DownloadPreference.VIDEO_SD -> AccentCyan
+                                        DownloadPreference.AUDIO_MP3 -> AccentAmber
+                                        DownloadPreference.ASK_FORMAT -> AccentPurple
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(
+                                                if (isSelected) chipColor.copy(alpha = 0.22f)
+                                                else DarkSurfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                            .border(
+                                                width = if (isSelected) 1.5.dp else 1.dp,
+                                                color = if (isSelected) chipColor else OutlineSoft,
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            .clickable {
+                                                selectedPreference = pref
+                                                DirectVideoExtractor.setDownloadPreference(context, pref)
+                                            }
+                                            .padding(horizontal = 11.dp, vertical = 7.dp)
+                                    ) {
+                                        Text(
+                                            text = pref.shortLabel,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = if (isSelected) chipColor else TextSecondary,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                fontSize = 12.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -432,7 +600,7 @@ fun VideoDownloaderTool(
                                     .weight(1f)
                                     .height(48.dp),
                                 shape = RoundedCornerShape(14.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f)),
+                                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f)),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
                             ) {
                                 Icon(
@@ -450,6 +618,7 @@ fun VideoDownloaderTool(
 
                             Button(
                                 onClick = { triggerDownload(urlInput) },
+                                enabled = !isInspectingFormats,
                                 modifier = Modifier
                                     .weight(1.25f)
                                     .height(48.dp),
@@ -459,18 +628,68 @@ fun VideoDownloaderTool(
                                     contentColor = Color.White
                                 )
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Tải Video Ngay",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
+                                if (isInspectingFormats) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Đang phân tích...",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (selectedPreference == DownloadPreference.ASK_FORMAT) {
+                                            "Chọn Chất Lượng"
+                                        } else {
+                                            "Tải Ngay"
+                                        },
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
+                        }
+
+                        // Secondary Button: Always allow inspecting formats/qualities/photos on demand
+                        OutlinedButton(
+                            onClick = {
+                                val target = urlInput.ifBlank { pasteFromClipboard().orEmpty() }
+                                if (target.isNotBlank() && urlInput.isBlank()) {
+                                    urlInput = target
+                                }
+                                inspectAndPickFormat(target)
+                            },
+                            enabled = !isInspectingFormats,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Phân tích Link & Chọn Chất lượng (1080p / 720p / SD / MP3 / Ảnh)",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -536,14 +755,14 @@ fun VideoDownloaderTool(
                                 modifier = Modifier.size(40.dp)
                             )
                             Text(
-                                text = "Chưa có video nào trong danh sách",
+                                text = "Chưa có mục tải nào trong danh sách",
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     color = TextPrimary,
                                     fontWeight = FontWeight.Medium
                                 )
                             )
                             Text(
-                                text = "Dán link vào ô phía trên hoặc chọn Chia sẻ → Tải Video (Tools Hub) từ ứng dụng bất kỳ.",
+                                text = "Dán link Video, Story hoặc bài đăng nhiều ảnh vào ô phía trên — hoặc chọn Chia sẻ → Tải Video (Tools Hub).",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = TextSecondary
                                 ),
@@ -559,15 +778,129 @@ fun VideoDownloaderTool(
                         onCancel = { VideoDownloadService.cancelDownload(context, task.id) },
                         onRetry = {
                             VideoDownloadService.removeTaskFromHistory(context, task.id)
-                            VideoDownloadService.startDownload(context, task.sourceUrl)
+                            VideoDownloadService.startDownload(context, task.sourceUrl, selectedPreference)
+                        },
+                        onLoginAndRetry = {
+                            pendingRetryUrlAfterLogin = task.sourceUrl
+                            VideoDownloadService.removeTaskFromHistory(context, task.id)
+                            loginDialogPlatform = if (task.platform == VideoPlatform.INSTAGRAM) {
+                                VideoPlatform.INSTAGRAM
+                            } else {
+                                VideoPlatform.FACEBOOK
+                            }
+                        },
+                        onPickFormat = {
+                            urlInput = task.sourceUrl
+                            inspectAndPickFormat(task.sourceUrl)
                         },
                         onRemove = { VideoDownloadService.removeTaskFromHistory(context, task.id) },
-                        onOpenVideo = { openSavedVideo(context, task) },
-                        onShareVideo = { shareSavedVideo(context, task) }
+                        onOpenMedia = { openSavedMedia(context, task) },
+                        onShareMedia = { shareSavedMedia(context, task) }
                     )
                 }
             }
         }
+    }
+
+    // Format / Quality & Multi-Photo Picker Dialog
+    val currentExtracted = extractedForPicker
+    if (currentExtracted != null) {
+        FormatSelectionDialog(
+            extracted = currentExtracted,
+            onDismiss = { extractedForPicker = null },
+            onSelectFormat = { fmt ->
+                extractedForPicker = null
+                urlInput = ""
+                VideoDownloadService.startDownloadWithFormat(
+                    context = context,
+                    extracted = currentExtracted,
+                    selectedFormat = fmt,
+                    downloadAllPhotos = false
+                )
+                Toast.makeText(
+                    context,
+                    "Đang tải: ${fmt.label}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            onDownloadAllPhotos = {
+                extractedForPicker = null
+                urlInput = ""
+                VideoDownloadService.startDownloadWithFormat(
+                    context = context,
+                    extracted = currentExtracted,
+                    selectedFormat = null,
+                    downloadAllPhotos = true
+                )
+                Toast.makeText(
+                    context,
+                    "Đang tải trọn bộ ${currentExtracted.mediaItems.size} ảnh...",
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            onDownloadSingleMediaItem = { idx, item ->
+                extractedForPicker = null
+                urlInput = ""
+                val itemLabel = "Ảnh ${idx + 1}/${currentExtracted.mediaItems.size}"
+                val singleFormat = VideoFormatOption(
+                    id = "item_${idx + 1}",
+                    label = itemLabel,
+                    qualityBadge = "Ảnh #${idx + 1}",
+                    downloadUrl = item.url,
+                    mediaType = item.mediaType,
+                    ext = item.ext,
+                    headers = item.headers.ifEmpty { currentExtracted.headers }
+                )
+                VideoDownloadService.startDownloadWithFormat(
+                    context = context,
+                    extracted = currentExtracted,
+                    selectedFormat = singleFormat,
+                    downloadAllPhotos = false
+                )
+                Toast.makeText(
+                    context,
+                    "Đang tải $itemLabel...",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        )
+    }
+
+    // Story Login WebView Dialog
+    val currentLoginPlatform = loginDialogPlatform
+    if (currentLoginPlatform != null) {
+        StoryWebViewLoginDialog(
+            platform = currentLoginPlatform,
+            onDismiss = {
+                loginDialogPlatform = null
+                pendingRetryUrlAfterLogin = null
+            },
+            onLoginSuccess = { cookie ->
+                DirectVideoExtractor.setPlatformCookie(context, currentLoginPlatform, cookie)
+                loginStatusTick++
+                loginDialogPlatform = null
+                Toast.makeText(
+                    context,
+                    "Đã kết nối tài khoản ${currentLoginPlatform.displayName} thành công!",
+                    Toast.LENGTH_SHORT
+                ).show()
+                val retryUrl = pendingRetryUrlAfterLogin
+                pendingRetryUrlAfterLogin = null
+                if (!retryUrl.isNullOrBlank()) {
+                    VideoDownloadService.startDownload(context, retryUrl, selectedPreference)
+                }
+            },
+            onLogout = {
+                DirectVideoExtractor.clearPlatformCookie(context, currentLoginPlatform)
+                loginStatusTick++
+                loginDialogPlatform = null
+                Toast.makeText(
+                    context,
+                    "Đã xoá phiên đăng nhập ${currentLoginPlatform.displayName}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        )
     }
 
     if (showSettingsDialog) {
@@ -578,14 +911,14 @@ fun VideoDownloaderTool(
             textContentColor = TextSecondary,
             title = {
                 Text(
-                    text = "Cấu hình Trình Tải Video",
+                    text = "Cấu hình Trình Tải Video & Story",
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Ứng dụng sử dụng bộ trích xuất siêu nhẹ kết hợp gọi trực tiếp tới Server API Online của bạn (không nhúng thư viện nặng vào máy):",
+                        text = "Ứng dụng sử dụng bộ trích xuất trực tiếp siêu nhẹ kết hợp Server API Online:",
                         fontSize = 13.sp,
                         color = TextSecondary
                     )
@@ -641,6 +974,45 @@ fun VideoDownloaderTool(
                             Text("Kiểm tra kết nối Server API")
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tài khoản tải Story (Facebook / Instagram yêu cầu đăng nhập để xem Story):",
+                        fontSize = 12.5.sp,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                showSettingsDialog = false
+                                loginDialogPlatform = VideoPlatform.FACEBOOK
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = if (fbLoggedIn) "FB: Đã kết nối" else "Đăng nhập FB",
+                                fontSize = 12.sp,
+                                color = if (fbLoggedIn) AccentGreen else AccentCyan
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                showSettingsDialog = false
+                                loginDialogPlatform = VideoPlatform.INSTAGRAM
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = if (igLoggedIn) "IG: Đã kết nối" else "Đăng nhập IG",
+                                fontSize = 12.sp,
+                                color = if (igLoggedIn) AccentGreen else AccentPink
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -672,6 +1044,460 @@ fun VideoDownloaderTool(
 }
 
 @Composable
+private fun StoryLoginChip(
+    label: String,
+    isLoggedIn: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    val color = if (isLoggedIn) AccentGreen else accentColor
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.16f))
+            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = color,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp
+            )
+        )
+    }
+}
+
+@Composable
+private fun FormatSelectionDialog(
+    extracted: ExtractedVideo,
+    onDismiss: () -> Unit,
+    onSelectFormat: (VideoFormatOption) -> Unit,
+    onDownloadAllPhotos: () -> Unit,
+    onDownloadSingleMediaItem: (Int, ExtractedMediaItem) -> Unit
+) {
+    val scrollState = rememberScrollState()
+    val videoFormats = remember(extracted) {
+        extracted.formats.filter { it.mediaType == MediaType.VIDEO }
+    }
+    val audioFormats = remember(extracted) {
+        extracted.formats.filter { it.mediaType == MediaType.AUDIO }
+    }
+    val imageFormats = remember(extracted) {
+        extracted.formats.filter { it.mediaType == MediaType.IMAGE }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = DarkSurface,
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .heightIn(max = 640.dp)
+                .border(1.dp, OutlineSoft, RoundedCornerShape(24.dp))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(18.dp)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PlatformBadge(platform = extracted.platform)
+                        Text(
+                            text = "Tuỳ chọn Tải về",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Rounded.Clear,
+                            contentDescription = "Đóng",
+                            tint = TextSecondary
+                        )
+                    }
+                }
+
+                Text(
+                    text = extracted.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Multi-photo / Carousel section
+                if (extracted.mediaItems.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = AccentGreen.copy(alpha = 0.12f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, AccentGreen.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Collections,
+                                    contentDescription = null,
+                                    tint = AccentGreen,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Phát hiện bài đăng chứa ${extracted.mediaItems.size} ảnh/slide",
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        color = AccentGreen,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                            }
+
+                            Button(
+                                onClick = onDownloadAllPhotos,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentGreen,
+                                    contentColor = Color.Black
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Tải toàn bộ ${extracted.mediaItems.size} ảnh gốc (Full HD)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.5.sp
+                                )
+                            }
+
+                            if (extracted.mediaItems.size > 1) {
+                                Text(
+                                    text = "Hoặc bấm để tải lẻ từng ảnh:",
+                                    style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary)
+                                )
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    extracted.mediaItems.forEachIndexed { idx, item ->
+                                        OutlinedButton(
+                                            onClick = { onDownloadSingleMediaItem(idx, item) },
+                                            shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f))
+                                        ) {
+                                            Text(
+                                                text = "Ảnh ${idx + 1}",
+                                                fontSize = 11.5.sp,
+                                                color = AccentCyan
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Video Qualities section
+                if (videoFormats.isNotEmpty()) {
+                    Text(
+                        text = "🎬 Chọn chất lượng Video (MP4):",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = AccentCyan,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    videoFormats.forEach { fmt ->
+                        FormatOptionRow(
+                            fmt = fmt,
+                            accentColor = AccentCyan,
+                            onClick = { onSelectFormat(fmt) }
+                        )
+                    }
+                }
+
+                // Single Image Formats (when not a multi-photo carousel)
+                if (extracted.mediaItems.isEmpty() && imageFormats.isNotEmpty()) {
+                    Text(
+                        text = "🖼️ Tải Ảnh gốc:",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = AccentGreen,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    imageFormats.forEach { fmt ->
+                        FormatOptionRow(
+                            fmt = fmt,
+                            accentColor = AccentGreen,
+                            onClick = { onSelectFormat(fmt) }
+                        )
+                    }
+                }
+
+                // Audio / MP3 section
+                if (audioFormats.isNotEmpty()) {
+                    Text(
+                        text = "🎵 Tải Âm thanh / Nhạc nền (MP3 / M4A):",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = AccentAmber,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    audioFormats.forEach { fmt ->
+                        FormatOptionRow(
+                            fmt = fmt,
+                            accentColor = AccentAmber,
+                            onClick = { onSelectFormat(fmt) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FormatOptionRow(
+    fmt: VideoFormatOption,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = DarkSurfaceVariant.copy(alpha = 0.6f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = when (fmt.mediaType) {
+                        MediaType.AUDIO -> Icons.Rounded.MusicNote
+                        MediaType.IMAGE -> Icons.Rounded.Image
+                        MediaType.VIDEO -> Icons.Rounded.VideoFile
+                    },
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column {
+                    Text(
+                        text = fmt.label,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    val subInfo = buildList {
+                        add(fmt.ext.uppercase())
+                        if (fmt.qualityBadge.isNotBlank()) add(fmt.qualityBadge)
+                        if (fmt.sizeBytes > 0L) add(VideoDownloadService.formatBytes(fmt.sizeBytes))
+                        if (fmt.extractAudioFromVideo) add("Tách âm thanh trực tiếp")
+                    }.joinToString(" • ")
+                    Text(
+                        text = subInfo,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+            }
+
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = "Tải",
+                tint = accentColor,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun StoryWebViewLoginDialog(
+    platform: VideoPlatform,
+    onDismiss: () -> Unit,
+    onLoginSuccess: (String) -> Unit,
+    onLogout: () -> Unit
+) {
+    val context = LocalContext.current
+    val loginUrl = remember(platform) {
+        if (platform == VideoPlatform.INSTAGRAM) {
+            "https://www.instagram.com/accounts/login/"
+        } else {
+            "https://m.facebook.com/login.php"
+        }
+    }
+    val hasExistingSession = remember(platform) {
+        DirectVideoExtractor.hasPlatformLogin(context, platform)
+    }
+    var loginCompleted by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = DarkSurface,
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.86f)
+                .border(1.dp, OutlineSoft, RoundedCornerShape(22.dp))
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Đăng nhập ${platform.displayName} để tải Story",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Text(
+                            text = "Cookie chỉ lưu cục bộ trên máy bạn để mở khoá tải Story",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (hasExistingSession) {
+                            TextButton(onClick = onLogout) {
+                                Text("Đăng xuất", color = AccentRed, fontSize = 12.sp)
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Rounded.Clear,
+                                contentDescription = "Đóng",
+                                tint = TextSecondary
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.userAgentString =
+                                    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                                val cookieManager = CookieManager.getInstance()
+                                cookieManager.setAcceptCookie(true)
+                                cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        super.onPageFinished(view, url)
+                                        if (loginCompleted) return
+                                        val checkDomains = if (platform == VideoPlatform.INSTAGRAM) {
+                                            listOf("https://www.instagram.com", "https://instagram.com")
+                                        } else {
+                                            listOf("https://www.facebook.com", "https://m.facebook.com")
+                                        }
+                                        val combinedCookie = checkDomains.mapNotNull { d ->
+                                            cookieManager.getCookie(d)
+                                        }.maxByOrNull { it.length }.orEmpty()
+
+                                        val isAuthed = if (platform == VideoPlatform.INSTAGRAM) {
+                                            combinedCookie.contains("sessionid=") &&
+                                                !combinedCookie.contains("sessionid=\"\"") &&
+                                                !combinedCookie.contains("sessionid=;")
+                                        } else {
+                                            combinedCookie.contains("c_user=") && combinedCookie.contains("xs=")
+                                        }
+                                        if (isAuthed) {
+                                            loginCompleted = true
+                                            cookieManager.flush()
+                                            onLoginSuccess(combinedCookie)
+                                        }
+                                    }
+
+                                    override fun shouldOverrideUrlLoading(
+                                        view: WebView?,
+                                        request: WebResourceRequest?
+                                    ): Boolean {
+                                        val reqUrl = request?.url?.toString().orEmpty()
+                                        if (reqUrl.startsWith("http://") || reqUrl.startsWith("https://")) {
+                                            return false
+                                        }
+                                        return true
+                                    }
+                                }
+                                loadUrl(loginUrl)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlatformBadge(platform: VideoPlatform) {
     Box(
         modifier = Modifier
@@ -695,9 +1521,11 @@ private fun DownloadTaskCard(
     task: DownloadTaskState,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onLoginAndRetry: () -> Unit,
+    onPickFormat: () -> Unit,
     onRemove: () -> Unit,
-    onOpenVideo: () -> Unit,
-    onShareVideo: () -> Unit
+    onOpenMedia: () -> Unit,
+    onShareMedia: () -> Unit
 ) {
     val animatedProgress by animateFloatAsState(
         targetValue = task.progress.coerceIn(0f, 1f),
@@ -732,10 +1560,30 @@ private fun DownloadTaskCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
                     PlatformBadge(platform = task.platform)
+                    if (task.qualityLabel.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(AccentPurple.copy(alpha = 0.16f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = task.qualityLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = AccentPurple,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 10.5.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     Text(
                         text = task.engineUsed,
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -784,7 +1632,7 @@ private fun DownloadTaskCard(
             )
 
             if (task.status == DownloadStatus.EXTRACTING || task.status == DownloadStatus.DOWNLOADING) {
-                if (task.status == DownloadStatus.EXTRACTING || task.totalBytes <= 0L) {
+                if (task.status == DownloadStatus.EXTRACTING || (task.totalBytes <= 0L && task.totalItems <= 1)) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -811,7 +1659,11 @@ private fun DownloadTaskCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val progressLabel = if (task.status == DownloadStatus.EXTRACTING) {
-                        "Đang bóc tách luồng MP4 gốc..."
+                        "Đang bóc tách luồng gốc..."
+                    } else if (task.totalItems > 1) {
+                        "Đang tải ảnh ${task.completedItems + 1}/${task.totalItems} • ${
+                            VideoDownloadService.formatBytes(task.downloadedBytes)
+                        }"
                     } else if (task.totalBytes > 0L) {
                         val pct = (task.progress * 100).toInt().coerceIn(0, 100)
                         "$pct% • ${VideoDownloadService.formatBytes(task.downloadedBytes)} / ${
@@ -852,11 +1704,24 @@ private fun DownloadTaskCard(
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
+                val folderLabel = when (task.mediaType) {
+                    MediaType.IMAGE -> if (task.totalItems > 1) {
+                        "Đã lưu ${task.totalItems} ảnh vào Thư viện (Pictures/ToolsHub)"
+                    } else {
+                        "Đã lưu ảnh vào Thư viện (Pictures/ToolsHub)"
+                    }
+                    MediaType.AUDIO -> "Đã lưu nhạc vào Music/ToolsHub"
+                    MediaType.VIDEO -> "Đã lưu vào Thư viện (Movies/ToolsHub)"
+                }
+                val openBtnLabel = when (task.mediaType) {
+                    MediaType.IMAGE -> if (task.totalItems > 1) "Mở Ảnh (${task.totalItems})" else "Mở Ảnh"
+                    MediaType.AUDIO -> "Phát Nhạc"
+                    MediaType.VIDEO -> "Mở Video"
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Đã lưu vào Thư viện (Movies/ToolsHub) • ${
-                            VideoDownloadService.formatBytes(task.downloadedBytes)
-                        }",
+                        text = "$folderLabel • ${VideoDownloadService.formatBytes(task.downloadedBytes)}",
                         style = MaterialTheme.typography.labelSmall.copy(color = AccentGreen)
                     )
                     Row(
@@ -864,7 +1729,7 @@ private fun DownloadTaskCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = onOpenVideo,
+                            onClick = onOpenMedia,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -874,16 +1739,20 @@ private fun DownloadTaskCard(
                             contentPadding = PaddingValues(vertical = 8.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.PlayArrow,
+                                imageVector = when (task.mediaType) {
+                                    MediaType.IMAGE -> Icons.Rounded.Image
+                                    MediaType.AUDIO -> Icons.Rounded.MusicNote
+                                    MediaType.VIDEO -> Icons.Rounded.PlayArrow
+                                },
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Mở Video", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                            Text(openBtnLabel, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
                         }
 
                         OutlinedButton(
-                            onClick = onShareVideo,
+                            onClick = onShareMedia,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(vertical = 8.dp)
@@ -896,6 +1765,14 @@ private fun DownloadTaskCard(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Chia sẻ", color = AccentCyan, fontSize = 12.5.sp)
+                        }
+
+                        IconButton(onClick = onPickFormat) {
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = "Đổi chất lượng / MP3",
+                                tint = AccentPurple
+                            )
                         }
 
                         IconButton(onClick = onRemove) {
@@ -911,17 +1788,44 @@ private fun DownloadTaskCard(
 
             if (task.status == DownloadStatus.FAILED || task.status == DownloadStatus.CANCELLED) {
                 Text(
-                    text = task.errorMessage ?: "Đã xảy ra lỗi khi tải video",
+                    text = task.errorMessage ?: "Đã xảy ra lỗi khi tải",
                     style = MaterialTheme.typography.bodySmall.copy(color = AccentRed)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onRemove) {
                         Text("Xoá", color = TextSecondary)
                     }
                     Spacer(modifier = Modifier.width(6.dp))
+                    if (task.requiresLogin ||
+                        task.errorMessage?.contains("login.php", ignoreCase = true) == true ||
+                        task.errorMessage?.contains("Story", ignoreCase = true) == true
+                    ) {
+                        Button(
+                            onClick = onLoginAndRetry,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AccentCyan,
+                                contentColor = Color.Black
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Key,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Đăng nhập ${task.platform.displayName} & Tải lại",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     Button(
                         onClick = onRetry,
                         shape = RoundedCornerShape(10.dp),
@@ -944,40 +1848,60 @@ private fun DownloadTaskCard(
     }
 }
 
-private fun openSavedVideo(context: Context, task: DownloadTaskState) {
-    val uriStr = task.savedUri
+private fun openSavedMedia(context: Context, task: DownloadTaskState) {
+    val uriStr = task.savedUri ?: task.savedUris.firstOrNull()
     if (uriStr.isNullOrBlank()) {
-        Toast.makeText(context, "Không tìm thấy đường dẫn file video", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Không tìm thấy đường dẫn file đã tải", Toast.LENGTH_SHORT).show()
         return
+    }
+    val mimeType = when (task.mediaType) {
+        MediaType.IMAGE -> "image/*"
+        MediaType.AUDIO -> "audio/*"
+        MediaType.VIDEO -> "video/mp4"
     }
     try {
         val uri = Uri.parse(uriStr)
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "video/mp4")
+            setDataAndType(uri, mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
     } catch (e: Throwable) {
-        Toast.makeText(context, "Không thể mở trình phát video: ${e.message}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Không thể mở file: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
 
-private fun shareSavedVideo(context: Context, task: DownloadTaskState) {
-    val uriStr = task.savedUri
-    if (uriStr.isNullOrBlank()) {
+private fun shareSavedMedia(context: Context, task: DownloadTaskState) {
+    val uris = if (task.savedUris.isNotEmpty()) {
+        task.savedUris.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
+    } else {
+        listOfNotNull(task.savedUri?.let { runCatching { Uri.parse(it) }.getOrNull() })
+    }
+    if (uris.isEmpty()) {
         Toast.makeText(context, "Không tìm thấy file để chia sẻ", Toast.LENGTH_SHORT).show()
         return
     }
+    val mimeType = when (task.mediaType) {
+        MediaType.IMAGE -> "image/*"
+        MediaType.AUDIO -> "audio/*"
+        MediaType.VIDEO -> "video/mp4"
+    }
     try {
-        val uri = Uri.parse(uriStr)
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "video/mp4"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val shareIntent = if (uris.size > 1) {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = mimeType
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uris.first())
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
-        context.startActivity(Intent.createChooser(shareIntent, "Chia sẻ video"))
+        context.startActivity(Intent.createChooser(shareIntent, "Chia sẻ"))
     } catch (e: Throwable) {
-        Toast.makeText(context, "Không thể chia sẻ video: ${e.message}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Không thể chia sẻ: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
-
