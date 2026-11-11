@@ -514,6 +514,9 @@ object VietQrHelper {
             .edit()
             .putString(KEY_MY_VIETQR, obj.toString())
             .apply()
+        runCatching {
+            com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider.updateAllWidgets(context)
+        }
     }
 
     fun loadHistory(context: Context): List<QrHistoryItem> {

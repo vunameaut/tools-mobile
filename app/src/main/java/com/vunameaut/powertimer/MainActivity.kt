@@ -38,6 +38,7 @@ import androidx.core.content.ContextCompat
 import com.vunameaut.powertimer.downloader.VideoPlatform
 import com.vunameaut.powertimer.ocr.OcrAndClipboardHelper
 import com.vunameaut.powertimer.service.QuickTileActions
+import com.vunameaut.powertimer.service.SystemDynamicIslandManager
 import com.vunameaut.powertimer.service.VideoDownloadService
 import com.vunameaut.powertimer.tools.ToolRegistry
 import com.vunameaut.powertimer.ui.components.WaterdropIslandOverlay
@@ -178,7 +179,14 @@ class MainActivity : ComponentActivity() {
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent == null) return
 
-        // Xử lý từ Bộ nút bấm nhanh Quick Settings Tiles trên thanh trạng thái
+        val openToolId = intent.getStringExtra("OPEN_TOOL_ID")
+        if (!openToolId.isNullOrBlank()) {
+            intent.removeExtra("OPEN_TOOL_ID")
+            currentRoute = "tool:$openToolId"
+            return
+        }
+
+        // Xử lý từ Tiện ích Màn hình chính (Home Screen Widgets) & Quick Settings Tiles
         val quickAction = intent.getStringExtra(QuickTileActions.EXTRA_QUICK_ACTION)
         if (!quickAction.isNullOrBlank()) {
             intent.removeExtra(QuickTileActions.EXTRA_QUICK_ACTION)
@@ -240,6 +248,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         val waterdropPrefs = getSharedPreferences("waterdrop_island_prefs", Context.MODE_PRIVATE)
         showWaterdropPreview = waterdropPrefs.getBoolean("always_show_waterdrop", true)
+        SystemDynamicIslandManager.refreshOverlay(this)
         timerViewModel.refreshPermissions()
         updateViewModel.onAppResumed(this)
     }

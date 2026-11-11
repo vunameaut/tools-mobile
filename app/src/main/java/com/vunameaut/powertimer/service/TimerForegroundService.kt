@@ -26,6 +26,7 @@ import com.vunameaut.powertimer.data.model.TimerState
 import com.vunameaut.powertimer.manager.ShakeDetector
 import com.vunameaut.powertimer.manager.ShutdownManager
 import com.vunameaut.powertimer.receiver.TimerAlarmReceiver
+import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -122,6 +123,8 @@ class TimerForegroundService : Service() {
             wakeLock?.release()
         }
         _timerFlow.value = TimerState()
+        SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
+        ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -160,6 +163,8 @@ class TimerForegroundService : Service() {
             )
             scheduleExactAlarm(newRemaining, current.selectedMode)
             updateNotification(newRemaining, current.selectedMode)
+            SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
+            ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
             vibrateShortBuzz()
             Toast.makeText(applicationContext, "Đã cộng thêm 10 phút!", Toast.LENGTH_SHORT).show()
         }
@@ -189,6 +194,8 @@ class TimerForegroundService : Service() {
 
         startForeground(NOTIFICATION_ID, buildNotification(seconds, mode))
         scheduleExactAlarm(seconds, mode)
+        SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
+        ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
 
         if (shakeToExtend) {
             shakeDetector = ShakeDetector(this) {
@@ -203,15 +210,17 @@ class TimerForegroundService : Service() {
                 delay(1000L)
                 remaining--
                 _timerFlow.value = _timerFlow.value.copy(remainingSeconds = remaining)
+                SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
 
                 // Cảnh báo rung trước 30 giây
                 if (remaining == 30L && playWarning) {
                     vibrateWarning()
                 }
 
-                // Cập nhật notification định kỳ
+                // Cập nhật notification & widget định kỳ
                 if (remaining % 5L == 0L || remaining <= 60L) {
                     updateNotification(remaining, mode)
+                    ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
                 }
             }
 

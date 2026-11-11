@@ -291,13 +291,14 @@ fun SoundboxTool(onExit: () -> Unit) {
                                 contentColor = Color.Black
                             ),
                             shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(46.dp)
                         ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Nghe thử +150k", fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Nghe thử +150k", fontWeight = FontWeight.Bold, maxLines = 1)
                         }
 
                         OutlinedButton(
@@ -311,13 +312,14 @@ fun SoundboxTool(onExit: () -> Unit) {
                                 )
                             },
                             shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(46.dp)
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Thử +1.25 Triệu", color = AccentGreen, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Thử +1.25 Triệu", color = AccentGreen, fontWeight = FontWeight.Bold, maxLines = 1)
                         }
                     }
                 }

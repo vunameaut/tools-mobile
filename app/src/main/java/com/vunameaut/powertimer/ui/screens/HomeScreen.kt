@@ -59,9 +59,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.vunameaut.powertimer.data.model.ShutdownMode
+import com.vunameaut.powertimer.service.IslandDisplayStyle
+import com.vunameaut.powertimer.service.SystemDynamicIslandManager
 import com.vunameaut.powertimer.ui.components.CircularCountdownTimer
 import com.vunameaut.powertimer.ui.components.ModeSelectorCard
 import com.vunameaut.powertimer.ui.components.PermissionItem
@@ -93,11 +101,29 @@ fun HomeScreen(
 
     var showPicker by remember { mutableStateOf(false) }
     var showStopConfirm by remember { mutableStateOf(false) }
-    val waterdropPrefs = remember {
-        context.getSharedPreferences("waterdrop_island_prefs", android.content.Context.MODE_PRIVATE)
-    }
+    val lifecycleOwner = LocalLifecycleOwner.current
     var alwaysShowWaterdrop by remember {
-        mutableStateOf(waterdropPrefs.getBoolean("always_show_waterdrop", true))
+        mutableStateOf(SystemDynamicIslandManager.isEnabled(context))
+    }
+    var canDrawOverlays by remember {
+        mutableStateOf(SystemDynamicIslandManager.canDrawOverlays(context))
+    }
+    var selectedIslandStyle by remember {
+        mutableStateOf(SystemDynamicIslandManager.getStyle(context))
+    }
+    var islandOffsetY by remember {
+        mutableStateOf(SystemDynamicIslandManager.getOffsetYDp(context))
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canDrawOverlays = SystemDynamicIslandManager.canDrawOverlays(context)
+                SystemDynamicIslandManager.refreshOverlay(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     if (showPicker) {
@@ -303,47 +329,143 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Thẻ bật/tắt & tương tác Màn hình Giọt nước (Waterdrop Island kiểu YouTube / Spotify)
+            // Thẻ bật/tắt & tương tác Màn hình Giọt nước (Dynamic Island Nổi Ngoài Màn Hình Chính kiểu YouTube / Spotify)
             Surface(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = AccentPurple.copy(alpha = 0.14f),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "💧 Màn hình Giọt nước (YouTube / Spotify)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentCyan
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "Hiển thị viên thuốc sóng nhạc quanh camera giọt nước trên đỉnh màn hình. Chạm hoặc vuốt xuống giọt nước để mở nhanh bộ điều khiển hẹn giờ!",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                            fontSize = 11.5.sp,
-                            lineHeight = 16.sp
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "💧 Dynamic Island Ngoài Màn Hình Chính",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentCyan
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "Hiển thị viên thuốc sóng nhạc trên thanh trạng thái ngay cả khi thoát ra ngoài màn hình chính hoặc lướt TikTok/Zalo (giống YouTube/Spotify).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Switch(
+                            checked = alwaysShowWaterdrop,
+                            onCheckedChange = { enabled ->
+                                alwaysShowWaterdrop = enabled
+                                SystemDynamicIslandManager.setEnabled(context, enabled)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = AccentGreen
+                            )
                         )
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Switch(
-                        checked = alwaysShowWaterdrop,
-                        onCheckedChange = { enabled ->
-                            alwaysShowWaterdrop = enabled
-                            waterdropPrefs.edit().putBoolean("always_show_waterdrop", enabled).apply()
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = AccentGreen
-                        )
-                    )
+
+                    if (alwaysShowWaterdrop) {
+                        if (!canDrawOverlays) {
+                            Button(
+                                onClick = { SystemDynamicIslandManager.openOverlayPermissionSettings(context) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentCyan,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "⚡ Cấp quyền Hiển thị ngoài màn hình chính (1 chạm)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "🎨 Chọn kiểu hiển thị Dynamic Island:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentGreen
+                            )
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(IslandDisplayStyle.entries) { styleItem ->
+                                    val selected = styleItem == selectedIslandStyle
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            selectedIslandStyle = styleItem
+                                            SystemDynamicIslandManager.setStyle(context, styleItem)
+                                        },
+                                        label = {
+                                            Text(
+                                                text = styleItem.title,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 1
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = AccentCyan,
+                                            selectedLabelColor = Color.Black
+                                        )
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Căn chỉnh vị trí khớp Camera (${islandOffsetY}dp):",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            islandOffsetY = (islandOffsetY - 2).coerceAtLeast(-10)
+                                            SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("▲ Lên", fontSize = 11.sp, color = AccentCyan, maxLines = 1)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            islandOffsetY = (islandOffsetY + 2).coerceAtMost(40)
+                                            SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("▼ Xuống", fontSize = 11.sp, color = AccentCyan, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

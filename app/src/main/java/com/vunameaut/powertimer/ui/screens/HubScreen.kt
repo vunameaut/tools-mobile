@@ -87,12 +87,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.vunameaut.powertimer.BuildConfig
 import com.vunameaut.powertimer.qr.VietQrHelper
-import com.vunameaut.powertimer.service.ClipboardVideoTileService
-import com.vunameaut.powertimer.service.MyVietQrTileService
-import com.vunameaut.powertimer.service.QuickTileActions
-import com.vunameaut.powertimer.service.ScannerOcrTileService
-import com.vunameaut.powertimer.service.SleepTimerTileService
 import com.vunameaut.powertimer.tools.ToolEntry
+import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
+import com.vunameaut.powertimer.widget.VietQrAppWidgetProvider
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
 import com.vunameaut.powertimer.ui.theme.AccentGreen
@@ -423,20 +420,14 @@ fun HubScreen(
             }
 
             item(span = { GridItemSpan(2) }) {
-                QuickSettingsTilesBanner()
-            }
-
-            item {
-                ComingSoonCard(
-                    modifier = Modifier.animateItem()
-                )
+                HomeScreenWidgetsBanner()
             }
         }
     }
 }
 
 @Composable
-private fun QuickSettingsTilesBanner() {
+private fun HomeScreenWidgetsBanner() {
     val context = LocalContext.current
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -450,13 +441,13 @@ private fun QuickSettingsTilesBanner() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "⚡ Bộ 4 Nút Bấm Nhanh Trên Thanh Trạng Thái (Quick Settings)",
+                text = "📌 Tiện Ích Đặt Ngoài Màn Hình Chính (Home Screen Widgets)",
                 fontWeight = FontWeight.Bold,
                 color = AccentCyan,
                 fontSize = 13.5.sp
             )
             Text(
-                text = "Chạm vào nút bên dưới để gắn trực tiếp các công cụ lên thanh kéo thông báo của Android (dùng ngay không cần mở app):",
+                text = "Đặt thanh 4 nút công cụ nhanh (Hẹn giờ, Quét QR, VietQR, Tải Video) hoặc thẻ mã VietQR cá nhân ra thẳng màn hình chính điện thoại:",
                 fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -466,52 +457,24 @@ private fun QuickSettingsTilesBanner() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 QuickTileChip(
-                    label = "🌙 Hẹn giờ Màn hình",
+                    label = "⚡ Ghim Tiện ích 4 Công Cụ",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        QuickTileActions.requestAddTileToStatusBar(
+                        ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
                             context,
-                            SleepTimerTileService::class.java,
-                            "Hẹn giờ Màn hình"
+                            ToolsHubAppWidgetProvider::class.java,
+                            "Bộ 4 Công Cụ Nhanh"
                         )
                     }
                 )
                 QuickTileChip(
-                    label = "📷 Quét QR / OCR",
+                    label = "🏦 Ghim Tiện ích Mã VietQR",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        QuickTileActions.requestAddTileToStatusBar(
+                        ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
                             context,
-                            ScannerOcrTileService::class.java,
-                            "Quét QR / OCR"
-                        )
-                    }
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                QuickTileChip(
-                    label = "🏦 Mã VietQR Của Tôi",
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        QuickTileActions.requestAddTileToStatusBar(
-                            context,
-                            MyVietQrTileService::class.java,
-                            "Mã VietQR Của Tôi"
-                        )
-                    }
-                )
-                QuickTileChip(
-                    label = "📥 Tải Video Clipboard",
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        QuickTileActions.requestAddTileToStatusBar(
-                            context,
-                            ClipboardVideoTileService::class.java,
-                            "Tải Video Clipboard"
+                            VietQrAppWidgetProvider::class.java,
+                            "Mã VietQR Cá Nhân"
                         )
                     }
                 )
@@ -534,7 +497,7 @@ private fun QuickTileChip(
             .clickable(onClick = onClick)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -542,7 +505,8 @@ private fun QuickTileChip(
                 text = label,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
             )
         }
     }

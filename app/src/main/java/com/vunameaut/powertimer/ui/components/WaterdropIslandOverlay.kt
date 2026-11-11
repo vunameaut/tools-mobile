@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.manager.ShutdownManager
+import com.vunameaut.powertimer.service.SystemDynamicIslandManager
 import com.vunameaut.powertimer.service.TimerForegroundService
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
@@ -115,7 +116,12 @@ fun WaterdropIslandOverlay(
     val scope = rememberCoroutineScope()
     val timerState by TimerForegroundService.timerFlow.collectAsState()
 
-    val isVisible = timerState.isRunning || forceVisibleForPreview
+    // Nếu người dùng đã cấp quyền Hiển thị trên ứng dụng khác (System Overlay),
+    // SystemDynamicIslandManager sẽ vẽ trực tiếp lên thanh trạng thái toàn hệ thống (ngoài màn hình chính & trong app),
+    // nên ẩn lớp Compose nội bộ để không bị chồng 2 hình.
+    val systemOverlayActive = SystemDynamicIslandManager.canDrawOverlays(context) &&
+        SystemDynamicIslandManager.isEnabled(context)
+    val isVisible = !systemOverlayActive && (timerState.isRunning || forceVisibleForPreview)
     var isExpanded by remember { mutableStateOf(false) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "waterdrop_anim")

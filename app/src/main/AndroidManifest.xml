@@ -20,6 +20,7 @@
     <uses-permission
         android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -179,6 +180,32 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- Tiện ích ngoài Màn hình chính (Home Screen Widgets) -->
+        <receiver
+            android:name=".widget.ToolsHubAppWidgetProvider"
+            android:label="Bộ 4 Công Cụ Nhanh (Tools Hub)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_TOGGLE_TIMER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_tools_hub_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.VietQrAppWidgetProvider"
+            android:label="Mã VietQR Cá Nhân (Tools Hub)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_my_vietqr_info" />
+        </receiver>
 
     </application>
 

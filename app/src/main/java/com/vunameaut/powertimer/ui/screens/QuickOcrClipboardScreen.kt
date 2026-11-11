@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -214,6 +215,7 @@ fun QuickOcrClipboardTool(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -223,7 +225,8 @@ fun QuickOcrClipboardTool(
                     label = {
                         Text(
                             text = "🔍 Quét chữ từ ảnh (Quick OCR)",
-                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(
@@ -239,7 +242,8 @@ fun QuickOcrClipboardTool(
                     label = {
                         Text(
                             text = "📋 Clipboard (${clipboardItems.size})",
-                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
                         )
                     },
                     colors = FilterChipDefaults.filterChipColors(

@@ -324,25 +324,27 @@ fun QrBarcodeStudioTool(
                                             containerColor = AccentCyan,
                                             contentColor = Color.Black
                                         ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(48.dp)
                                     ) {
                                         Icon(Icons.Rounded.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Chụp Camera", fontWeight = FontWeight.Bold)
+                                        Text("Chụp Camera", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
 
                                     OutlinedButton(
                                         onClick = { galleryPickerLauncher.launch("image/*") },
                                         shape = RoundedCornerShape(14.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(48.dp)
                                     ) {
                                         Icon(Icons.Rounded.Image, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Chọn từ Thư viện", color = AccentCyan, fontWeight = FontWeight.Bold)
+                                        Text("Chọn từ Thư viện", color = AccentCyan, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -622,13 +624,19 @@ fun QrBarcodeStudioTool(
                                         containerColor = AccentGreen,
                                         contentColor = Color.Black
                                     ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(48.dp)
                                 ) {
                                     Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Lưu làm VietQR Cá Nhân & Thêm vào Lịch sử", fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Lưu làm VietQR Cá Nhân & Lịch sử",
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
@@ -783,7 +791,12 @@ fun QrBarcodeStudioTool(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
                                     listOf(
                                         "LINK" to "🔗 Link / Văn bản",
                                         "WIFI" to "📶 Chia sẻ Wi-Fi",
@@ -792,7 +805,7 @@ fun QrBarcodeStudioTool(
                                         FilterChip(
                                             selected = createMode == modeKey,
                                             onClick = { createMode = modeKey },
-                                            label = { Text(modeLabel, fontSize = 12.sp) }
+                                            label = { Text(modeLabel, fontSize = 12.sp, maxLines = 1) }
                                         )
                                     }
                                 }
