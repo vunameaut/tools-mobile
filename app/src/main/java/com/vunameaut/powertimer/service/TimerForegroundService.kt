@@ -406,7 +406,7 @@ class TimerForegroundService : Service() {
 
         val totalSeconds = _timerFlow.value.totalSeconds.coerceAtLeast(1L)
         val formatted = _timerFlow.value.formattedRemaining.ifBlank { "30:00" }
-        val artwork = NativeMediaIslandBridge.getCurrentArtwork(remainingSeconds, totalSeconds)
+        val artwork = NativeMediaIslandBridge.getCurrentArtwork(this, remainingSeconds, totalSeconds)
         val sessionToken = NativeMediaIslandBridge.getSessionToken(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && sessionToken != null) {

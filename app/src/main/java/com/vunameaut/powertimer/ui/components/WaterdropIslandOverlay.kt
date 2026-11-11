@@ -116,12 +116,9 @@ fun WaterdropIslandOverlay(
     val scope = rememberCoroutineScope()
     val timerState by TimerForegroundService.timerFlow.collectAsState()
 
-    // Nếu người dùng đã cấp quyền Hiển thị trên ứng dụng khác (System Overlay),
-    // SystemDynamicIslandManager sẽ vẽ trực tiếp lên thanh trạng thái toàn hệ thống (ngoài màn hình chính & trong app),
-    // nên ẩn lớp Compose nội bộ để không bị chồng 2 hình.
-    val systemOverlayActive = SystemDynamicIslandManager.canDrawOverlays(context) &&
-        SystemDynamicIslandManager.isEnabled(context)
-    val isVisible = !systemOverlayActive && (timerState.isRunning || forceVisibleForPreview)
+    // Đã sử dụng trực tiếp Dynamic Island gốc của hệ thống (qua NativeMediaIslandBridge giống YouTube),
+    // nên tắt hoàn toàn lớp phủ phụ để không bao giờ bị hiện đè 2 viên thuốc lên nhau.
+    val isVisible = false
     var isExpanded by remember { mutableStateOf(false) }
     var isMinimized by remember { mutableStateOf(SystemDynamicIslandManager.isMinimized(context)) }
 

@@ -384,154 +384,47 @@ fun HomeScreen(
                     }
 
                     if (alwaysShowWaterdrop) {
-                        if (!canDrawOverlays) {
-                            Button(
-                                onClick = { SystemDynamicIslandManager.openOverlayPermissionSettings(context) },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AccentCyan,
-                                    contentColor = Color.Black
-                                ),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = "⚡ Cấp quyền Hiển thị ngoài màn hình chính (1 chạm)",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        } else {
-                            Text(
-                                text = "🎨 Chọn kiểu hiển thị Dynamic Island:",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AccentGreen
-                            )
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(IslandDisplayStyle.entries) { styleItem ->
-                                    val selected = styleItem == selectedIslandStyle
-                                    FilterChip(
-                                        selected = selected,
-                                        onClick = {
-                                            selectedIslandStyle = styleItem
-                                            SystemDynamicIslandManager.setStyle(context, styleItem)
-                                        },
-                                        label = {
-                                            Text(
-                                                text = styleItem.title,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                                maxLines = 1
-                                            )
-                                        },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = AccentCyan,
-                                            selectedLabelColor = Color.Black
+                        Text(
+                            text = "🎨 Chọn màu đồng hồ trong Dynamic Island gốc:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentGreen
+                        )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(IslandDisplayStyle.entries.filter { it != IslandDisplayStyle.NATIVE_SYSTEM }) { styleItem ->
+                                val selected = styleItem == selectedIslandStyle ||
+                                    (selectedIslandStyle == IslandDisplayStyle.NATIVE_SYSTEM && styleItem == IslandDisplayStyle.SPOTIFY_YOUTUBE)
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        selectedIslandStyle = styleItem
+                                        SystemDynamicIslandManager.setStyle(context, styleItem)
+                                    },
+                                    label = {
+                                        Text(
+                                            text = styleItem.title,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1
                                         )
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        isIslandMinimized = !isIslandMinimized
-                                        SystemDynamicIslandManager.setMinimized(context, isIslandMinimized)
                                     },
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                ) {
-                                    Text(
-                                        text = if (isIslandMinimized) "🔍 Bung viên thuốc" else "🗕 Thu nhỏ gọn",
-                                        fontSize = 11.5.sp,
-                                        color = AccentGreen,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = AccentCyan,
+                                        selectedLabelColor = Color.Black
                                     )
-                                }
-
-                                OutlinedButton(
-                                    onClick = {
-                                        SystemDynamicIslandManager.resetPositionAndSize(context)
-                                        islandOffsetY = SystemDynamicIslandManager.getOffsetYDp(context)
-                                        isIslandMinimized = false
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                ) {
-                                    Text(
-                                        text = "🔄 Về giữa Camera",
-                                        fontSize = 11.5.sp,
-                                        color = AccentCyan,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Vị trí ôm Camera (${islandOffsetY}dp) hoặc kéo tự do:",
-                                    fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 8.dp)
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            islandOffsetY = (islandOffsetY - 1).coerceAtLeast(-4)
-                                            SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(30.dp)
-                                    ) {
-                                        Text("▲ Lên", fontSize = 11.sp, color = AccentCyan, maxLines = 1, softWrap = false)
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            islandOffsetY = (islandOffsetY + 1).coerceAtMost(120)
-                                            SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(30.dp)
-                                    ) {
-                                        Text("▼ Xuống", fontSize = 11.sp, color = AccentCyan, maxLines = 1, softWrap = false)
-                                    }
-                                }
                             }
-
-                            Text(
-                                text = "💡 Mẹo: Viên thuốc được gắn liền sát lỗ đục Camera trước giống YouTube (rộng 152dp nên không bị chữ mạng/pin đè lên) kèm đệm cảm ứng dưới chân viên thuốc: Chạm hoặc vuốt nhẹ từ viên thuốc xuống để bung bảng điều khiển, chạm đúp để mở nhanh App!",
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
+
+                        Text(
+                            text = "💡 Tích hợp 100% với Dynamic Island gốc của máy (giống hệt YouTube/Spotify, không vẽ đè lớp phủ giả): Chạm trực tiếp vào viên thuốc quanh camera để bung bảng điều khiển, nhấn vào tên/đồng hồ để mở lại App, nút ⏭ (+10 phút) hoặc ⏮ (Khóa ngay)!",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

@@ -130,7 +130,18 @@ object SystemDynamicIslandManager {
             .edit()
             .putBoolean(KEY_ENABLED, enabled)
             .apply()
-        refreshOverlay(context)
+        val state = TimerForegroundService.timerFlow.value
+        if (enabled && state.isRunning) {
+            NativeMediaIslandBridge.startOrUpdate(
+                context,
+                state.remainingSeconds,
+                state.totalSeconds,
+                state.selectedMode
+            )
+        } else if (!enabled) {
+            NativeMediaIslandBridge.stop()
+        }
+        hideOverlay()
     }
 
     fun isShowOutsideApp(context: Context): Boolean {
@@ -143,7 +154,7 @@ object SystemDynamicIslandManager {
             .edit()
             .putBoolean(KEY_SHOW_OUTSIDE_APP, showOutside)
             .apply()
-        refreshOverlay(context)
+        hideOverlay()
     }
 
     fun isMinimized(context: Context): Boolean {
@@ -156,8 +167,7 @@ object SystemDynamicIslandManager {
             .edit()
             .putBoolean(KEY_MINIMIZED, minimized)
             .apply()
-        floatingView?.setSizeMode(if (minimized) IslandSizeMode.MINIMIZED else IslandSizeMode.COMPACT)
-        refreshOverlay(context)
+        hideOverlay()
     }
 
     fun getStyle(context: Context): IslandDisplayStyle {
@@ -171,8 +181,16 @@ object SystemDynamicIslandManager {
             .edit()
             .putString(KEY_STYLE, style.id)
             .apply()
-        floatingView?.setDisplayStyle(style)
-        refreshOverlay(context)
+        val state = TimerForegroundService.timerFlow.value
+        if (state.isRunning && isEnabled(context)) {
+            NativeMediaIslandBridge.startOrUpdate(
+                context,
+                state.remainingSeconds,
+                state.totalSeconds,
+                state.selectedMode
+            )
+        }
+        hideOverlay()
     }
 
     fun getOffsetXDp(context: Context): Int {
@@ -238,24 +256,19 @@ object SystemDynamicIslandManager {
 
     fun refreshOverlay(context: Context, state: TimerState = TimerForegroundService.timerFlow.value) {
         val appCtx = context.applicationContext
-        val style = getStyle(appCtx)
-
-        // Nếu người dùng chọn chế độ Đảo Hệ Thống Gốc (NATIVE_SYSTEM) và bộ đếm đang chạy,
-        // nhường hoàn toàn vị trí camera cho Dynamic Island gốc của máy (do NativeMediaIslandBridge kích hoạt)
-        if (style == IslandDisplayStyle.NATIVE_SYSTEM && state.isRunning) {
-            hideOverlay()
-            return
+        // Luôn ẩn hoàn toàn lớp phủ WindowManager phụ để KHÔNG BAO GIỜ bị vẽ đè 2 viên thuốc lên nhau;
+        // Chỉ sử dụng DUY NHẤT Dynamic Island gốc của hệ thống (qua NativeMediaIslandBridge giống YouTube)!
+        hideOverlay()
+        if (isEnabled(appCtx) && state.isRunning) {
+            NativeMediaIslandBridge.startOrUpdate(
+                appCtx,
+                state.remainingSeconds,
+                state.totalSeconds,
+                state.selectedMode
+            )
+        } else if (!state.isRunning || !isEnabled(appCtx)) {
+            NativeMediaIslandBridge.stop()
         }
-
-        val shouldShow = isEnabled(appCtx) &&
-            canDrawOverlays(appCtx) &&
-            (state.isRunning || isShowOutsideApp(appCtx))
-
-        if (!shouldShow) {
-            hideOverlay()
-            return
-        }
-        showOrUpdateOverlay(appCtx, state)
     }
 
     @SuppressLint("ClickableViewAccessibility")

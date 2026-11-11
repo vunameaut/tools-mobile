@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -25,26 +26,23 @@ import com.vunameaut.powertimer.manager.ShutdownManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.math.sin
 
 /**
- * Cầu nối kích hoạt Dynamic Island GỐC CỦA HỆ THỐNG (giống hệt YouTube / YT Music / Spotify)
- * trên các dòng máy có sẵn Dynamic Island trong SystemUI (OPPO/Realme/OnePlus ColorOS Fluid Cloud,
+ * Cầu nối kích hoạt DUY NHẤT Dynamic Island GỐC CỦA HỆ THỐNG (giống hệt YouTube / YT Music / Spotify)
+ * trên các dòng máy có sẵn Dynamic Island trong SystemUI (ColorOS/RealmeUI/OxygenOS Fluid Cloud,
  * Vivo OriginOS Atomic Island, Xiaomi HyperOS Super Island, Honor Magic Capsule, Samsung OneUI Now Bar).
  *
- * Cơ chế hoạt động chuẩn như YouTube & Spotify:
- * 1. Khởi tạo `MediaSession` đang phát (`PlaybackState.STATE_PLAYING`) kèm `MediaMetadata`
- *    (Tiêu đề thời gian còn lại, Thanh tiến trình, Ảnh bìa đồng hồ Neon động).
- * 2. Gắn `MediaSession.Token` vào Foreground Notification với `Notification.MediaStyle`.
- * 3. Duy trì luồng `AudioTrack` (`USAGE_MEDIA`, âm lượng siêu nhỏ không nghe thấy & KHÔNG chiếm AudioFocus
- *    nên không bao giờ làm dừng nhạc YouTube/TikTok/Spotify) để SystemUI nhận diện luồng phát trực tiếp
- *    và ghim viên thuốc sóng âm ngay quanh camera trước.
+ * Lưu ý quan trọng:
+ * - Chỉ sử dụng Dynamic Island gốc của hệ thống (qua MediaSession + Notification.MediaStyle + Silent AudioTrack),
+ *   TUYỆT ĐỐI KHÔNG vẽ thêm lớp phủ WindowManager đè lên trên để không bao giờ bị hiện 2 viên thuốc chồng nhau!
  */
 object NativeMediaIslandBridge {
 
     private var mediaSession: MediaSession? = null
     private var silentAudioTrack: AudioTrack? = null
     private var cachedArtwork: Bitmap? = null
-    private var lastArtworkTimeText: String = ""
+    private var lastArtworkKey: String = ""
 
     fun startOrUpdate(
         context: Context,
@@ -53,14 +51,20 @@ object NativeMediaIslandBridge {
         mode: ShutdownMode
     ) {
         val appCtx = context.applicationContext
+        if (!SystemDynamicIslandManager.isEnabled(appCtx)) {
+            stop()
+            return
+        }
+
         ensureSilentMediaStreamRunning()
         val session = ensureMediaSession(appCtx)
 
+        val style = SystemDynamicIslandManager.getStyle(appCtx)
         val formatted = formatTime(remainingSeconds)
         val totalMs = (totalSeconds.coerceAtLeast(1L)) * 1000L
         val elapsedMs = ((totalSeconds - remainingSeconds).coerceAtLeast(0L)) * 1000L
 
-        val artwork = getOrRenderArtwork(formatted, remainingSeconds, totalSeconds)
+        val artwork = getOrRenderArtwork(formatted, remainingSeconds, totalSeconds, style)
 
         val playbackState = PlaybackState.Builder()
             .setActions(
@@ -83,7 +87,7 @@ object NativeMediaIslandBridge {
 
         val metadata = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, "⏳ Còn $formatted • Hẹn giờ tắt màn")
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "${mode.badge} • Bấm ⏭ để +10 phút")
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "${mode.badge} • Bấm ⏭ +10p • ⏮ Tắt màn")
             .putString(MediaMetadata.METADATA_KEY_ALBUM, "Tools Hub PowerTimer")
             .putLong(MediaMetadata.METADATA_KEY_DURATION, totalMs)
             .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
@@ -96,11 +100,13 @@ object NativeMediaIslandBridge {
     }
 
     fun getSessionToken(context: Context): MediaSession.Token? {
+        if (!SystemDynamicIslandManager.isEnabled(context)) return null
         return ensureMediaSession(context.applicationContext).sessionToken
     }
 
-    fun getCurrentArtwork(remainingSeconds: Long, totalSeconds: Long): Bitmap {
-        return getOrRenderArtwork(formatTime(remainingSeconds), remainingSeconds, totalSeconds)
+    fun getCurrentArtwork(context: Context, remainingSeconds: Long, totalSeconds: Long): Bitmap {
+        val style = SystemDynamicIslandManager.getStyle(context)
+        return getOrRenderArtwork(formatTime(remainingSeconds), remainingSeconds, totalSeconds, style)
     }
 
     fun stop() {
@@ -149,8 +155,8 @@ object NativeMediaIslandBridge {
                 }
 
                 override fun onPause() {
-                    // Bấm tạm dừng trên Dynamic Island gốc -> Cộng thêm 10 phút hoặc mở App
-                    TimerForegroundService.addTenMinutes(context)
+                    // Bấm nút giữa trên Dynamic Island -> Mở nhanh vào lại App hoặc cộng 10 phút
+                    SystemDynamicIslandManager.openAppFromOverlay(context)
                 }
 
                 override fun onStop() {
@@ -195,7 +201,7 @@ object NativeMediaIslandBridge {
         runCatching {
             current?.release()
             val sampleRate = 8000
-            val sampleCount = sampleRate // 1 giây mẫu
+            val sampleCount = sampleRate
             val samples = ShortArray(sampleCount) { idx -> if (idx % 2 == 0) 1 else -1 }
             val byteSize = sampleCount * 2
 
@@ -230,36 +236,61 @@ object NativeMediaIslandBridge {
     private fun getOrRenderArtwork(
         formattedTime: String,
         remainingSeconds: Long,
-        totalSeconds: Long
+        totalSeconds: Long,
+        style: IslandDisplayStyle
     ): Bitmap {
         val shortTime = formattedTime.take(5)
+        val key = "${style.id}_$shortTime"
         val existing = cachedArtwork
-        if (existing != null && lastArtworkTimeText == shortTime) {
+        if (existing != null && lastArtworkKey == key) {
             return existing
         }
-        lastArtworkTimeText = shortTime
+        lastArtworkKey = key
 
         val size = 192
         val bmp = existing ?: Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        canvas.drawColor(Color.parseColor("#060916"))
+        canvas.drawColor(Color.parseColor("#05070E"))
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val cx = size / 2f
         val cy = size / 2f
-        val radius = size * 0.40f
+        val radius = size * 0.44f
 
         // Vòng tròn nền
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 14f
+        paint.strokeWidth = 16f
         paint.color = Color.parseColor("#1E293B")
         canvas.drawCircle(cx, cy, radius, paint)
 
-        // Vòng cung tiến trình Neon
+        // Vòng cung tiến trình tùy theo kiểu hiển thị người dùng chọn
         val progress = (remainingSeconds.toFloat() / totalSeconds.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 1f)
+        val ringColors = when (style) {
+            IslandDisplayStyle.NEON_CYBER -> intArrayOf(
+                Color.parseColor("#00E5FF"),
+                Color.parseColor("#A855F7"),
+                Color.parseColor("#EC4899")
+            )
+            IslandDisplayStyle.LIQUID_WAVE -> intArrayOf(
+                Color.parseColor("#EC4899"),
+                Color.parseColor("#6366F1"),
+                Color.parseColor("#06B6D4")
+            )
+            IslandDisplayStyle.MINIMAL_IOS -> intArrayOf(
+                Color.parseColor("#F59E0B"),
+                Color.parseColor("#22C55E"),
+                Color.parseColor("#10B981")
+            )
+            else -> intArrayOf(
+                Color.parseColor("#22C55E"),
+                Color.parseColor("#00E5FF"),
+                Color.parseColor("#3B82F6")
+            )
+        }
+
         paint.shader = LinearGradient(
             0f, 0f, size.toFloat(), size.toFloat(),
-            intArrayOf(Color.parseColor("#22C55E"), Color.parseColor("#00E5FF"), Color.parseColor("#6366F1")),
+            ringColors,
             null,
             Shader.TileMode.CLAMP
         )
@@ -268,13 +299,32 @@ object NativeMediaIslandBridge {
         canvas.drawArc(arcRect, -90f, 360f * progress, false, paint)
         paint.shader = null
 
-        // Chữ thời gian ở chính giữa ảnh bìa
+        if (style == IslandDisplayStyle.LIQUID_WAVE) {
+            val wavePath = Path()
+            wavePath.moveTo(24f, cy + 36f)
+            var x = 24f
+            while (x <= size - 24f) {
+                val y = cy + 34f + sin((x / size) * 4.0 * Math.PI).toFloat() * 6f
+                wavePath.lineTo(x, y)
+                x += 8f
+            }
+            paint.strokeWidth = 4f
+            paint.color = Color.parseColor("#EC4899")
+            canvas.drawPath(wavePath, paint)
+        }
+
+        // Chữ thời gian (MM:SS) to, đậm, rõ nét ngay giữa vòng tròn của Dynamic Island gốc
         paint.style = Paint.Style.FILL
-        paint.color = Color.parseColor("#4ADE80")
-        paint.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        paint.textSize = 40f
+        paint.color = when (style) {
+            IslandDisplayStyle.NEON_CYBER -> Color.parseColor("#00E5FF")
+            IslandDisplayStyle.LIQUID_WAVE -> Color.WHITE
+            IslandDisplayStyle.MINIMAL_IOS -> Color.parseColor("#FACC15")
+            else -> Color.parseColor("#4ADE80")
+        }
+        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        paint.textSize = 48f
         paint.textAlign = Paint.Align.CENTER
-        canvas.drawText(shortTime, cx, cy + 14f, paint)
+        canvas.drawText(shortTime, cx, cy + 16f, paint)
 
         cachedArtwork = bmp
         return bmp
@@ -292,4 +342,3 @@ object NativeMediaIslandBridge {
         }
     }
 }
-
