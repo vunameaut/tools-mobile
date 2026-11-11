@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DragIndicator
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
@@ -521,15 +522,17 @@ private fun HubHeader(toolCount: Int, hasUpdate: Boolean, onOpenUpdate: () -> Un
             .fillMaxWidth()
             .padding(top = 12.dp, bottom = 12.dp)
     ) {
+        ToolsHubBrandBadge()
+        Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "Tools Hub",
-                fontSize = 32.sp,
+                fontSize = 30.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
-                text = "$toolCount công cụ  •  v${BuildConfig.VERSION_NAME}",
+                text = "$toolCount công cụ đa năng  •  v${BuildConfig.VERSION_NAME}",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -560,6 +563,113 @@ private fun HubHeader(toolCount: Int, hasUpdate: Boolean, onOpenUpdate: () -> Un
                         .background(AccentAmber)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ToolsHubBrandBadge() {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(Color(0xFF0A0F24), Color(0xFF1E1038))
+                )
+            )
+            .border(
+                width = 1.dp,
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        AccentCyan.copy(alpha = 0.5f),
+                        Color(0xFFF43F5E).copy(alpha = 0.4f),
+                        AccentPurple.copy(alpha = 0.5f)
+                    )
+                ),
+                shape = RoundedCornerShape(14.dp)
+            )
+            .padding(6.dp)
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF38BDF8), Color(0xFF0284C7))
+                            )
+                        )
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFFB7185), Color(0xFFE11D48))
+                            )
+                        )
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFA855F7), Color(0xFF6366F1))
+                            )
+                        )
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF34D399), Color(0xFF059669))
+                            )
+                        )
+                )
+            }
+        }
+        // Center Lightning Core
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF060916))
+                .border(1.2.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Bolt,
+                contentDescription = null,
+                tint = Color(0xFFFBBF24),
+                modifier = Modifier.size(13.dp)
+            )
         }
     }
 }

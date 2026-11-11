@@ -1,25 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:scaleX="1.8"
-        android:scaleY="1.8"
-        android:translateX="32.4"
-        android:translateY="32.4">
-        <!-- Power icon ring and bar -->
-        <path
-            android:fillColor="#00000000"
-            android:strokeColor="#7C4DFF"
-            android:strokeWidth="2.5"
-            android:strokeLineCap="round"
-            android:pathData="M16.59,4.58C19.86,6.34 22,9.88 22,14c0,5.52 -4.48,10 -10,10S2,19.52 2,14c0,-4.12 2.14,-7.66 5.41,-9.42"/>
-        <path
-            android:fillColor="#00000000"
-            android:strokeColor="#64FFDA"
-            android:strokeWidth="2.5"
-            android:strokeLineCap="round"
-            android:pathData="M12,2v10"/>
-    </group>
+
+    <!-- Viên thuốc Dynamic Island nhỏ phía đỉnh (đặc trưng của Tools Hub) -->
+    <path
+        android:fillColor="#FF05070E"
+        android:strokeColor="#FF38BDF8"
+        android:strokeWidth="1.1"
+        android:pathData="M43,21h22a3,3 0,0 1,3 3v0a3,3 0,0 1,-3 3h-22a3,3 0,0 1,-3 -3v0a3,3 0,0 1,3 -3z" />
+    <path
+        android:fillColor="#FF22C55E"
+        android:pathData="M46,24m-1.4,0a1.4,1.4 0,1 1,2.8 0a1.4,1.4 0,1 1,-2.8 0" />
+    <path
+        android:fillColor="#FF00E5FF"
+        android:pathData="M60,22.8h1.2v2.4h-1.2zM62.2,22.2h1.2v3.6h-1.2z" />
+
+    <!-- ==================== Ô 1 (TRÊN - TRÁI): QR & VIETQR STUDIO (CYAN) ==================== -->
+    <path android:pathData="M33,29h16a4.5,4.5 0,0 1,4.5 4.5v16a4.5,4.5 0,0 1,-4.5 4.5h-16a4.5,4.5 0,0 1,-4.5 -4.5v-16a4.5,4.5 0,0 1,4.5 -4.5z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="28.5"
+                android:startY="29"
+                android:endX="53.5"
+                android:endY="54"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF00E5FF" />
+                <item android:offset="1.0" android:color="#FF0284C7" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Họa tiết mã QR bên trong Ô 1 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF041020"
+        android:strokeWidth="1.9"
+        android:pathData="M33.2,33.7h5.2v5.2h-5.2zM43.2,33.7h5.2v5.2h-5.2zM33.2,43.7h5.2v5.2h-5.2z" />
+    <path
+        android:fillColor="#FF041020"
+        android:pathData="M43,43.5h2.6v2.6h-2.6zM46.2,46.5h2.6v2.6h-2.6zM43,46.8h2v2.2h-2z" />
+
+    <!-- ==================== Ô 2 (TRÊN - PHẢI): TẢI VIDEO & ĐA PHƯƠNG TIỆN (PINK/ROSE) ==================== -->
+    <path android:pathData="M59,29h16a4.5,4.5 0,0 1,4.5 4.5v16a4.5,4.5 0,0 1,-4.5 4.5h-16a4.5,4.5 0,0 1,-4.5 -4.5v-16a4.5,4.5 0,0 1,4.5 -4.5z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54.5"
+                android:startY="29"
+                android:endX="79.5"
+                android:endY="54"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFF2E93" />
+                <item android:offset="1.0" android:color="#FFBE185D" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Mũi tên Tải xuống + Khay lưu trong Ô 2 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M67,34.2v9.5M63.2,40.4l3.8,3.8l3.8,-3.8M61.8,48.2h10.4" />
+
+    <!-- ==================== Ô 3 (DƯỚI - TRÁI): HẸN GIỜ TẮT MÀN HÌNH (PURPLE/INDIGO) ==================== -->
+    <path android:pathData="M33,55h16a4.5,4.5 0,0 1,4.5 4.5v16a4.5,4.5 0,0 1,-4.5 4.5h-16a4.5,4.5 0,0 1,-4.5 -4.5v-16a4.5,4.5 0,0 1,4.5 -4.5z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="28.5"
+                android:startY="55"
+                android:endX="53.5"
+                android:endY="80"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFA855F7" />
+                <item android:offset="1.0" android:color="#FF4F46E5" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Đồng hồ đếm ngược bên trong Ô 3 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:pathData="M41,67.5m-6.8,0a6.8,6.8 0,1 1,13.6 0a6.8,6.8 0,1 1,-13.6 0" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFACC15"
+        android:strokeWidth="2.1"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M41,64v3.7l2.7,1.8" />
+
+    <!-- ==================== Ô 4 (DƯỚI - PHẢI): LOA SOUNDBOX & CHIA TIỀN (EMERALD GREEN) ==================== -->
+    <path android:pathData="M59,55h16a4.5,4.5 0,0 1,4.5 4.5v16a4.5,4.5 0,0 1,-4.5 4.5h-16a4.5,4.5 0,0 1,-4.5 -4.5v-16a4.5,4.5 0,0 1,4.5 -4.5z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54.5"
+                android:startY="55"
+                android:endX="79.5"
+                android:endY="80"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF22C55E" />
+                <item android:offset="1.0" android:color="#FF059669" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Biểu tượng Loa Soundbox + Sóng âm thanh báo tiền bên trong Ô 4 -->
+    <path
+        android:fillColor="#FF04140B"
+        android:pathData="M61,65.2h2.8l3.6,-3.2v11l-3.6,-3.2h-2.8z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF04140B"
+        android:strokeWidth="2.0"
+        android:strokeLineCap="round"
+        android:pathData="M70.2,64.5c1.2,1.5 1.2,4.5 0,6M73,62.5c2.2,2.8 2.2,7.2 0,10" />
+
+    <!-- ==================== TÂM HUB TRUNG TÂM: HUY HIỆU TIA CHỚP ĐA NĂNG ==================== -->
+    <path
+        android:fillColor="#FF070B19"
+        android:strokeColor="#FF38BDF8"
+        android:strokeWidth="1.5"
+        android:pathData="M54,54.5m-8.2,0a8.2,8.2 0,1 1,16.4 0a8.2,8.2 0,1 1,-16.4 0" />
+    <path
+        android:fillColor="#FFFACC15"
+        android:pathData="M55.2,49.2L50.8,55.2h3.1l-1.1,4.6l4.6,-6h-3.1z" />
 </vector>
