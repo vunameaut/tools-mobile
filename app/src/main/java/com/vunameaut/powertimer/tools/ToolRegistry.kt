@@ -3,15 +3,23 @@ package com.vunameaut.powertimer.tools
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Casino
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DocumentScanner
+import androidx.compose.material.icons.rounded.Lightbulb
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.PhoneCallback
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.vunameaut.powertimer.ui.screens.BillSplitterTool
+import com.vunameaut.powertimer.ui.screens.CountdownDaysTool
+import com.vunameaut.powertimer.ui.screens.FakeCallTool
+import com.vunameaut.powertimer.ui.screens.LedBannerTool
+import com.vunameaut.powertimer.ui.screens.MemeSoundboardTool
 import com.vunameaut.powertimer.ui.screens.PowerTimerTool
 import com.vunameaut.powertimer.ui.screens.QrBarcodeStudioTool
 import com.vunameaut.powertimer.ui.screens.QuickOcrClipboardTool
@@ -23,6 +31,7 @@ import com.vunameaut.powertimer.ui.theme.AccentCyan
 import com.vunameaut.powertimer.ui.theme.AccentGreen
 import com.vunameaut.powertimer.ui.theme.AccentPink
 import com.vunameaut.powertimer.ui.theme.AccentPurple
+import com.vunameaut.powertimer.ui.theme.AccentRed
 
 /** Mô tả một công cụ nằm trong Tools Hub. */
 data class ToolEntry(
@@ -96,5 +105,37 @@ val ToolRegistry: List<ToolEntry> = listOf(
         icon = Icons.Rounded.Casino,
         accent = AccentAmber,
         content = { onBack -> RandomDecisionTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "fake_call",
+        title = "Cuộc Gọi Giả (Fake Call)",
+        description = "Hẹn giờ Sếp / Mẹ gọi đến kèm nhạc chuông & giọng nói thật để thoát thân khéo léo",
+        icon = Icons.Rounded.PhoneCallback,
+        accent = AccentGreen,
+        content = { onBack -> FakeCallTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "led_banner",
+        title = "Bảng Chữ LED Toàn Màn Hình",
+        description = "Chữ chạy LED Matrix siêu sáng xoay ngang 100% độ sáng đi concert, quán bar, bến xe",
+        icon = Icons.Rounded.Lightbulb,
+        accent = AccentCyan,
+        content = { onBack -> LedBannerTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "meme_soundboard",
+        title = "Túi Âm Thanh Vui Nhộn",
+        description = "Phát tiếng vỗ tay rần rần, tiếng dế kêu, trống tùng xèng, còi hơi, cười khả ố...",
+        icon = Icons.Rounded.MusicNote,
+        accent = AccentPink,
+        content = { onBack -> MemeSoundboardTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "countdown_days",
+        title = "Đếm Ngày & Kỷ Niệm",
+        description = "Đếm ngược tới Tết, Lương về, Sinh nhật • Đếm số ngày yêu nhau theo từng giây",
+        icon = Icons.Rounded.CalendarMonth,
+        accent = AccentRed,
+        content = { onBack -> CountdownDaysTool(onExit = onBack) }
     )
 )

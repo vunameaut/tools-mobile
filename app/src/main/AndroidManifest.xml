@@ -22,6 +22,7 @@
         android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -97,6 +98,19 @@
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
+        <!-- Màn hình Cuộc Gọi Giả (Fake Call) toàn màn hình y hệt cuộc gọi đến thật -->
+        <activity
+            android:name=".ui.screens.FakeCallIncomingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showOnLockScreen="true"
+            android:theme="@style/Theme.PowerTimer" />
+
+        <receiver
+            android:name=".ui.screens.FakeCallAlarmReceiver"
+            android:exported="false" />
 
         <!-- Accessibility Service (Mặc định tắt/ẩn Component để App Ngân hàng không quét thấy) -->
         <service
