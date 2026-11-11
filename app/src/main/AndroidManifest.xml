@@ -24,6 +24,14 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Bắt buộc trên Android 11+ (targetSdk 30+) để kết nối dịch vụ Giọng đọc TextToSpeech (Google TTS / Samsung TTS) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <package android:name="com.google.android.tts" />
+    </queries>
+
     <application
         android:name=".PowerTimerApplication"
         android:allowBackup="true"

@@ -5,22 +5,36 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioTrack
+import android.media.MediaPlayer
+import android.media.PlaybackParams
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
+import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Locale
+import kotlin.math.exp
+import kotlin.math.sin
 
 data class SoundboxTransaction(
     val id: Long = System.currentTimeMillis(),
@@ -40,11 +54,14 @@ class MoneySoundboxService : NotificationListenerService() {
         private const val KEY_ALL_APPS_MODE = "soundbox_all_apps_mode"
         private const val KEY_TRANSACTIONS = "soundbox_tx_history"
 
+        private val soundboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
         private val _transactionsFlow = MutableStateFlow<List<SoundboxTransaction>>(emptyList())
         val transactionsFlow = _transactionsFlow.asStateFlow()
 
-        private var activeInstance: MoneySoundboxService? = null
         private var standaloneTts: TextToSpeech? = null
+        private var isStandaloneTtsReady: Boolean = false
+        private var activeMediaPlayer: MediaPlayer? = null
         private var lastDedupeKey: String = ""
         private var lastDedupeTimeMs: Long = 0L
 
@@ -81,6 +98,17 @@ class MoneySoundboxService : NotificationListenerService() {
             return flat.contains(cn) || flat.contains(context.packageName)
         }
 
+        /**
+         * Yêu cầu hệ thống Android kết nối lại ngay lập tức với NotificationListenerService
+         * sau khi người dùng vừa cấp quyền (không cần khởi động lại máy).
+         */
+        fun ensureServiceRebound(context: Context) {
+            if (!isNotificationListenerGranted(context)) return
+            runCatching {
+                requestRebind(ComponentName(context.applicationContext, MoneySoundboxService::class.java))
+            }
+        }
+
         fun openNotificationListenerSettings(context: Context) {
             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -98,6 +126,7 @@ class MoneySoundboxService : NotificationListenerService() {
                 .edit()
                 .putBoolean(KEY_ENABLED, enabled)
                 .apply()
+            if (enabled) ensureServiceRebound(context)
         }
 
         fun isBoostVolume(context: Context): Boolean {
@@ -200,8 +229,11 @@ class MoneySoundboxService : NotificationListenerService() {
             val combined = "$title $body".replace('\n', ' ').trim()
             if (combined.isBlank()) return null
 
-            // Loại trừ thông báo trừ tiền rõ ràng nếu không có dấu cộng
-            val plusPattern = Regex("""\+\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,10})\s*(?:VND|VNĐ|đ|d|đồng)?""", RegexOption.IGNORE_CASE)
+            // 1. Mẫu có dấu cộng (+150,000 VND, + 150.000đ, PS:+50,000, GD: +200.000...)
+            val plusPattern = Regex(
+                """\+\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,11})\s*(?:VND|VNĐ|đ|d|đồng|\b)?""",
+                RegexOption.IGNORE_CASE
+            )
             val plusMatch = plusPattern.find(combined)
             if (plusMatch != null) {
                 val digits = plusMatch.groupValues[1].replace(Regex("[^0-9]"), "")
@@ -209,9 +241,9 @@ class MoneySoundboxService : NotificationListenerService() {
                 if (value in 1_000L..10_000_000_000L) return value
             }
 
-            // Mẫu ví điện tử / ngân hàng bằng lời: "nhận được 150.000đ", "vừa nhận 50,000 VND", "cộng 200.000đ"
+            // 2. Mẫu ví điện tử / ngân hàng bằng lời: "nhận được 150.000đ", "vừa nhận 50,000 VND", "cộng 200.000đ", "tăng 100,000 VND"
             val verbalPattern = Regex(
-                """(?:nhận được|vừa nhận|đã nhận|cộng thêm|chuyển đến bạn)\s+(\d{1,3}(?:[.,]\d{3})+|\d{4,10})\s*(?:VND|VNĐ|đ|d|đồng)""",
+                """(?:nhận được|vừa nhận|đã nhận|nhận tiền|cộng thêm|chuyển đến bạn|tăng)\s*:?\s*\+?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,11})\s*(?:VND|VNĐ|đ|d|đồng)""",
                 RegexOption.IGNORE_CASE
             )
             val verbalMatch = verbalPattern.find(combined)
@@ -249,7 +281,8 @@ class MoneySoundboxService : NotificationListenerService() {
         }
 
         /**
-         * Phát tiếng chuông Ting-Ting + Đọc to số tiền (dùng chung cho cả Service thực tế và nút Nghe thử).
+         * Phát tiếng chuông Ting-Ting + Đọc to số tiền qua kênh MEDIA (STREAM_MUSIC)
+         * để đảm bảo 100% phát ra tiếng kể cả khi điện thoại đang để chế độ Rung / Im lặng thông báo.
          */
         fun announceMoneyReceived(
             context: Context,
@@ -258,9 +291,12 @@ class MoneySoundboxService : NotificationListenerService() {
             rawMessage: String,
             saveToHistory: Boolean = true
         ) {
+            val appCtx = context.applicationContext
+            ensureServiceRebound(appCtx)
+
             if (saveToHistory) {
                 recordTransaction(
-                    context.applicationContext,
+                    appCtx,
                     SoundboxTransaction(
                         sourceApp = sourceApp,
                         amount = amount,
@@ -269,86 +305,235 @@ class MoneySoundboxService : NotificationListenerService() {
                 )
             }
 
-            val svc = activeInstance
-            if (svc != null) {
-                svc.speakAmountInternal(amount, sourceApp)
-                return
-            }
-
-            // Fallback khi người dùng bấm "Nghe thử" lúc chưa cấp quyền NotificationListener
-            playTingTingChime()
-            val appCtx = context.applicationContext
             val speechText = formatVndForSpeech(amount, sourceApp)
             val rate = getSpeechRate(appCtx)
 
-            val existing = standaloneTts
-            if (existing != null) {
-                existing.setSpeechRate(rate)
-                existing.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, "tx_${System.currentTimeMillis()}")
-            } else {
-                var ttsRef: TextToSpeech? = null
-                ttsRef = TextToSpeech(appCtx) { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        ttsRef?.language = Locale("vi", "VN")
-                        ttsRef?.setSpeechRate(rate)
-                        ttsRef?.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, "tx_${System.currentTimeMillis()}")
+            soundboxScope.launch {
+                // Thông báo trực quan trên màn hình ngay lập tức
+                Toast.makeText(
+                    appCtx,
+                    "🔊 Loa Soundbox: \"$speechText\"",
+                    Toast.LENGTH_SHORT
+                ).show()
+
+                // Đảm bảo âm lượng kênh Media (STREAM_MUSIC) đủ lớn để nghe rõ
+                ensureMediaVolumeAudible(appCtx)
+
+                // Bước 1: Phát tiếng chuông "Ting - Ting!" bằng sóng âm tổng hợp trên kênh STREAM_MUSIC
+                withContext(Dispatchers.Default) {
+                    playSynthesizedTingTingBell()
+                }
+
+                // Bước 2: Đọc giọng nói Tiếng Việt (ưu tiên giọng đọc Tiếng Việt chuẩn tự nhiên + fallback TTS nội bộ)
+                val playedOnline = withContext(Dispatchers.IO) {
+                    playNaturalVietnameseVoice(appCtx, speechText, rate)
+                }
+                if (!playedOnline) {
+                    speakViaSystemTts(appCtx, speechText, rate)
+                }
+            }
+        }
+
+        private fun ensureMediaVolumeAudible(context: Context) {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (isBoostVolume(context)) {
+                val targetVol = (maxVol * 0.85f).toInt().coerceAtLeast(currentVol)
+                runCatching {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                }
+            } else if (currentVol == 0) {
+                // Nếu âm lượng Media đang bị tắt hẳn về 0, tự nâng lên 50% để người dùng nghe thấy khi bấm thử
+                val minAudible = (maxVol * 0.5f).toInt().coerceAtLeast(1)
+                runCatching {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, minAudible, 0)
+                }
+            }
+        }
+
+        /**
+         * Tạo âm thanh chuông "Ting-Ting!" chuẩn loa thanh toán cửa hàng bằng PCM 16-bit trên kênh USAGE_MEDIA.
+         * Không dùng ToneGenerator(STREAM_NOTIFICATION) vì sẽ bị tắt tiếng khi máy bật chế độ Rung / Không làm phiền.
+         */
+        private fun playSynthesizedTingTingBell() {
+            runCatching {
+                val sampleRate = 44100
+                val durationMs = 460
+                val totalSamples = (sampleRate * durationMs) / 1000
+                val pcm = ShortArray(totalSamples)
+
+                val note1Samples = (sampleRate * 145) / 1000
+                val freq1 = 1318.5 // Note E6
+                val freq2 = 1760.0 // Note A6
+
+                for (i in 0 until totalSamples) {
+                    val isFirstNote = i < note1Samples
+                    val localIdx = if (isFirstNote) i else (i - note1Samples)
+                    val t = localIdx.toDouble() / sampleRate
+                    val freq = if (isFirstNote) freq1 else freq2
+                    val envelope = exp(-t * (if (isFirstNote) 11.0 else 7.5))
+                    val fundamental = sin(2.0 * Math.PI * freq * t)
+                    val harmonic = 0.35 * sin(2.0 * Math.PI * freq * 2.0 * t)
+                    val sample = ((fundamental + harmonic) * envelope * 0.72 * Short.MAX_VALUE).toInt()
+                        .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                    pcm[i] = sample.toShort()
+                }
+
+                val audioAttrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                val audioFormat = AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(audioAttrs)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(pcm.size * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+
+                track.write(pcm, 0, pcm.size)
+                track.play()
+                Thread.sleep(durationMs.toLong() + 40L)
+                track.stop()
+                track.release()
+            }
+        }
+
+        /**
+         * Phát giọng đọc Tiếng Việt chuẩn tự nhiên qua MediaPlayer (USAGE_MEDIA) có lưu cache cục bộ,
+         * giúp mọi dòng máy (kể cả máy xách tay chưa cài gói giọng đọc Tiếng Việt) đều phát loa rõ ràng.
+         */
+        private fun playNaturalVietnameseVoice(
+            context: Context,
+            speechText: String,
+            rate: Float
+        ): Boolean {
+            return runCatching {
+                val cacheDir = File(context.cacheDir, "soundbox_tts_cache").apply { mkdirs() }
+                val hash = MessageDigest.getInstance("MD5")
+                    .digest(speechText.toByteArray(Charsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }
+                val audioFile = File(cacheDir, "vi_$hash.mp3")
+
+                if (!audioFile.exists() || audioFile.length() < 256L) {
+                    val encoded = URLEncoder.encode(speechText, "UTF-8")
+                    val urlStr = "https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=$encoded"
+                    val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 3500
+                        readTimeout = 4500
+                        requestMethod = "GET"
+                        setRequestProperty(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                        )
+                    }
+                    if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                        conn.disconnect()
+                        return false
+                    }
+                    conn.inputStream.use { input ->
+                        audioFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    conn.disconnect()
+                }
+
+                if (!audioFile.exists() || audioFile.length() < 256L) return false
+
+                soundboxScope.launch(Dispatchers.Main) {
+                    runCatching {
+                        activeMediaPlayer?.release()
+                        val mp = MediaPlayer()
+                        activeMediaPlayer = mp
+                        mp.setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        mp.setDataSource(audioFile.absolutePath)
+                        mp.prepare()
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            runCatching {
+                                mp.playbackParams = PlaybackParams().setSpeed(rate.coerceIn(0.8f, 1.35f))
+                            }
+                        }
+                        mp.setOnCompletionListener { player ->
+                            player.release()
+                            if (activeMediaPlayer === player) activeMediaPlayer = null
+                        }
+                        mp.start()
                     }
                 }
-                standaloneTts = ttsRef
-            }
+                true
+            }.getOrDefault(false)
         }
 
-        private fun playTingTingChime() {
-            CoroutineScope(Dispatchers.Default).launch {
-                runCatching {
-                    val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-                    toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 140)
-                    delay(160)
-                    toneGen.startTone(ToneGenerator.TONE_PROP_ACK, 240)
-                    delay(300)
-                    toneGen.release()
+        /**
+         * Dự phòng Offline: Đọc bằng TextToSpeech hệ thống trên kênh USAGE_MEDIA / STREAM_MUSIC.
+         */
+        private fun speakViaSystemTts(
+            context: Context,
+            speechText: String,
+            rate: Float
+        ) {
+            val appCtx = context.applicationContext
+            val mediaAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val params = Bundle().apply {
+                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+            }
+
+            val existing = standaloneTts
+            if (existing != null && isStandaloneTtsReady) {
+                existing.setAudioAttributes(mediaAttrs)
+                existing.setSpeechRate(rate)
+                existing.speak(speechText, TextToSpeech.QUEUE_FLUSH, params, "tx_${System.currentTimeMillis()}")
+                return
+            }
+
+            var ttsRef: TextToSpeech? = null
+            ttsRef = TextToSpeech(appCtx) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    val engine = ttsRef ?: return@TextToSpeech
+                    engine.setAudioAttributes(mediaAttrs)
+                    val viRes = engine.setLanguage(Locale("vi", "VN"))
+                    if (viRes == TextToSpeech.LANG_MISSING_DATA || viRes == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        engine.language = Locale.getDefault()
+                    }
+                    isStandaloneTtsReady = true
+                    engine.setSpeechRate(rate)
+                    engine.speak(speechText, TextToSpeech.QUEUE_FLUSH, params, "tx_${System.currentTimeMillis()}")
                 }
             }
+            standaloneTts = ttsRef
         }
     }
-
-    private var tts: TextToSpeech? = null
-    private var isTtsReady = false
 
     override fun onCreate() {
         super.onCreate()
-        activeInstance = this
         loadTransactions(applicationContext)
-        initTts()
     }
 
-    override fun onDestroy() {
-        if (activeInstance === this) {
-            activeInstance = null
-        }
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        super.onDestroy()
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        loadTransactions(applicationContext)
     }
 
-    private fun initTts() {
-        tts = TextToSpeech(applicationContext) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val viLocale = Locale("vi", "VN")
-                val res = tts?.setLanguage(viLocale)
-                isTtsReady = res != TextToSpeech.LANG_MISSING_DATA && res != TextToSpeech.LANG_NOT_SUPPORTED
-                if (!isTtsReady) {
-                    tts?.language = Locale.getDefault()
-                    isTtsReady = true
-                }
-                tts?.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-            }
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        runCatching {
+            requestRebind(ComponentName(applicationContext, MoneySoundboxService::class.java))
         }
     }
 
@@ -358,7 +543,7 @@ class MoneySoundboxService : NotificationListenerService() {
         if (!isEnabled(applicationContext)) return
 
         val pkg = sbn.packageName.orEmpty()
-        // Bỏ qua thông báo hệ thống hoặc của chính phần hẹn giờ/tải video trong app
+        // Bỏ qua thông báo hệ thống
         if (pkg == "android" || pkg == "com.android.systemui") return
 
         val knownBankName = KNOWN_BANK_PACKAGES[pkg]
@@ -369,7 +554,13 @@ class MoneySoundboxService : NotificationListenerService() {
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
-        val body = if (bigText.length > text.length) bigText else text
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
+        val body = listOf(bigText, text, subText).filter { it.isNotBlank() }.joinToString(" ")
+
+        // Chặn đọc lặp thông báo của chính dịch vụ hẹn giờ / tải video
+        if (pkg == applicationContext.packageName && !title.contains("Biến động số dư", ignoreCase = true)) {
+            return
+        }
 
         val amount = parseIncomingMoneyAmount(title, body) ?: return
         val bankLabel = knownBankName ?: detectBankNameFromContent("$title $body")
@@ -383,15 +574,13 @@ class MoneySoundboxService : NotificationListenerService() {
         lastDedupeKey = dedupeKey
         lastDedupeTimeMs = now
 
-        recordTransaction(
-            applicationContext,
-            SoundboxTransaction(
-                sourceApp = bankLabel,
-                amount = amount,
-                rawMessage = "$title: $body".trim(':', ' ')
-            )
+        announceMoneyReceived(
+            context = applicationContext,
+            amount = amount,
+            sourceApp = bankLabel,
+            rawMessage = "$title: $text".trim(':', ' '),
+            saveToHistory = true
         )
-        speakAmountInternal(amount, bankLabel)
     }
 
     private fun detectBankNameFromContent(content: String): String {
@@ -416,34 +605,4 @@ class MoneySoundboxService : NotificationListenerService() {
             else -> "Tài khoản"
         }
     }
-
-    internal fun speakAmountInternal(amount: Long, sourceApp: String) {
-        playTingTingChime()
-        val speech = formatVndForSpeech(amount, sourceApp)
-        val rate = getSpeechRate(applicationContext)
-
-        CoroutineScope(Dispatchers.Main).launch {
-            delay(360)
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            val originalVolume = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC)
-            if (isBoostVolume(applicationContext) && audioManager != null) {
-                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                val targetVol = (maxVol * 0.85f).toInt().coerceAtLeast(originalVolume ?: 0)
-                runCatching {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
-                }
-            }
-
-            if (tts == null || !isTtsReady) {
-                initTts()
-                delay(400)
-            }
-            tts?.setSpeechRate(rate)
-            val params = Bundle().apply {
-                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-            }
-            tts?.speak(speech, TextToSpeech.QUEUE_ADD, params, "soundbox_${System.currentTimeMillis()}")
-        }
-    }
 }
-

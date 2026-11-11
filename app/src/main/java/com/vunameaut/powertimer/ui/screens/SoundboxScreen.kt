@@ -1,6 +1,11 @@
 package com.vunameaut.powertimer.ui.screens
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.core.app.NotificationCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +67,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -96,6 +102,7 @@ fun SoundboxTool(onExit: () -> Unit) {
     val transactions by MoneySoundboxService.transactionsFlow.collectAsState()
 
     LaunchedEffect(Unit) {
+        MoneySoundboxService.ensureServiceRebound(context)
         MoneySoundboxService.loadTransactions(context)
     }
 
@@ -103,6 +110,7 @@ fun SoundboxTool(onExit: () -> Unit) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasNotificationAccess = MoneySoundboxService.isNotificationListenerGranted(context)
+                MoneySoundboxService.ensureServiceRebound(context)
                 MoneySoundboxService.loadTransactions(context)
             }
         }
@@ -298,7 +306,13 @@ fun SoundboxTool(onExit: () -> Unit) {
                         ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Nghe thử +150k", fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(
+                                text = "Nghe thử +150k",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         OutlinedButton(
@@ -319,8 +333,43 @@ fun SoundboxTool(onExit: () -> Unit) {
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Thử +1.25 Triệu", color = AccentGreen, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(
+                                text = "Thử +1.25 Triệu",
+                                color = AccentGreen,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            triggerSimulatedBankNotification(context)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.NotificationsActive,
+                            contentDescription = null,
+                            tint = AccentAmber,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Bắn thử Thông báo Ngân hàng thật (+500.000đ)",
+                            color = AccentAmber,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.5.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -561,4 +610,39 @@ fun SoundboxTool(onExit: () -> Unit) {
         }
     }
 }
+
+private fun triggerSimulatedBankNotification(context: Context) {
+    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+    val channelId = "soundbox_sim_bank_channel"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            channelId,
+            "Giả lập Biến động số dư",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        nm.createNotificationChannel(channel)
+    }
+
+    val notif = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.stat_notify_chat)
+        .setContentTitle("Biến động số dư MB Bank")
+        .setContentText("TK 9999xxxx +500,000 VND. ND: Khach chuyen khoan")
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setAutoCancel(true)
+        .build()
+
+    nm.notify((System.currentTimeMillis() % 10000).toInt() + 5000, notif)
+
+    // Nếu người dùng chưa bật quyền Đọc thông báo, vẫn phát trực tiếp để kiểm tra loa
+    if (!MoneySoundboxService.isNotificationListenerGranted(context)) {
+        MoneySoundboxService.announceMoneyReceived(
+            context = context,
+            amount = 500_000L,
+            sourceApp = "MB Bank",
+            rawMessage = "TK 9999xxxx +500,000 VND. ND: Khach chuyen khoan",
+            saveToHistory = true
+        )
+    }
+}
+
 
