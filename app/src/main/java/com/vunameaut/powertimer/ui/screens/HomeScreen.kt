@@ -477,7 +477,7 @@ fun HomeScreen(
                                         .height(36.dp)
                                 ) {
                                     Text(
-                                        text = "🔄 Về giữa Camera",
+                                        text = "🔄 Đặt lại vị trí",
                                         fontSize = 11.5.sp,
                                         color = AccentCyan,
                                         fontWeight = FontWeight.Bold,
@@ -494,7 +494,7 @@ fun HomeScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Chỉnh độ cao (${islandOffsetY}dp) hoặc giữ kéo trực tiếp:",
+                                    text = "Cách dưới thanh trạng thái (${islandOffsetY}dp) hoặc kéo tự do:",
                                     fontSize = 11.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier
@@ -504,7 +504,7 @@ fun HomeScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     OutlinedButton(
                                         onClick = {
-                                            islandOffsetY = (islandOffsetY - 2).coerceAtLeast(-10)
+                                            islandOffsetY = (islandOffsetY - 2).coerceAtLeast(0)
                                             SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
                                         },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
@@ -514,7 +514,7 @@ fun HomeScreen(
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            islandOffsetY = (islandOffsetY + 2).coerceAtMost(260)
+                                            islandOffsetY = (islandOffsetY + 2).coerceAtMost(320)
                                             SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
                                         },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
@@ -526,7 +526,7 @@ fun HomeScreen(
                             }
 
                             Text(
-                                text = "💡 Mẹo: Chạm đúp vào viên thuốc để mở nhanh lại App, bấm nút (–) ở mép phải viên thuốc để thu nhỏ gọn, hoặc giữ kéo đi bất kỳ đâu.",
+                                text = "💡 Mẹo: Dynamic Island nằm ngay dưới thanh trạng thái để không bị che & chạm nhạy 100%. Chạm thân viên thuốc để bung bảng điều khiển, bấm (↗) mở nhanh App, bấm (–) thu nhỏ gọn, hoặc giữ kéo đi bất kỳ đâu.",
                                 fontSize = 11.sp,
                                 lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

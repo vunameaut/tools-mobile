@@ -20,8 +20,10 @@ import android.os.Build
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import com.vunameaut.powertimer.MainActivity
@@ -91,13 +93,36 @@ object SystemDynamicIslandManager {
     private const val KEY_SHOW_OUTSIDE_APP = "show_island_outside_app"
     private const val KEY_STYLE = "island_display_style"
     private const val KEY_OFFSET_X_DP = "island_offset_x_dp"
-    private const val KEY_OFFSET_Y_DP = "island_offset_y_dp"
+    private const val KEY_OFFSET_Y_DP = "island_below_status_offset_y_dp"
     private const val KEY_MINIMIZED = "island_is_minimized"
 
     private var windowManager: WindowManager? = null
     private var floatingView: FloatingIslandCanvasView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isAdded = false
+    private var detectedWindowBaseY: Int = 0
+
+    /**
+     * Tính toán chính xác chiều cao vùng Thanh trạng thái + Camera đục lỗ (Status Bar & Cutout)
+     * để đặt Dynamic Island ngay sát bên dưới Thanh trạng thái:
+     * - Không bao giờ bị các biểu tượng đồng hồ / mạng / pin của thanh trạng thái đè lên.
+     * - Không bị cửa sổ Status Bar của hệ thống chặn mất thao tác chạm (Touch Interception).
+     */
+    fun getSafeStatusBarBottomPx(context: Context): Int {
+        val resId = context.resources.getIdentifier("status_bar_height", "dimen", "android")
+        val resHeight = if (resId > 0) context.resources.getDimensionPixelSize(resId) else 0
+        val insetsTop = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                wm?.currentWindowMetrics?.windowInsets
+                    ?.getInsetsIgnoringVisibility(
+                        WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()
+                    )?.top ?: 0
+            }.getOrDefault(0)
+        } else 0
+        val minSafePx = dpToPx(context, 40f)
+        return maxOf(resHeight, insetsTop, minSafePx)
+    }
 
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)
@@ -185,10 +210,11 @@ object SystemDynamicIslandManager {
     fun getOffsetYDp(context: Context): Int {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getInt(KEY_OFFSET_Y_DP, 4)
+            .coerceIn(0, 320)
     }
 
     fun setOffsetYDp(context: Context, offsetDp: Int) {
-        val clamped = offsetDp.coerceIn(-10, 260)
+        val clamped = offsetDp.coerceIn(0, 320)
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_OFFSET_Y_DP, clamped)
@@ -207,21 +233,34 @@ object SystemDynamicIslandManager {
         refreshOverlay(context)
     }
 
+    private fun computeWindowY(context: Context): Int {
+        val safeTopPx = getSafeStatusBarBottomPx(context)
+        val userOffsetPx = dpToPx(context, getOffsetYDp(context).toFloat())
+        val desiredScreenY = safeTopPx + userOffsetPx
+        val minWindowY = (safeTopPx - detectedWindowBaseY).coerceAtLeast(0)
+        return (desiredScreenY - detectedWindowBaseY).coerceAtLeast(minWindowY)
+    }
+
     internal fun onDragDeltaPx(context: Context, dxPx: Float, dyPx: Float) {
         val params = layoutParams ?: return
         val wm = windowManager ?: return
         val view = floatingView ?: return
         val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+        val safeTopPx = getSafeStatusBarBottomPx(context)
+        val minWindowY = (safeTopPx - detectedWindowBaseY).coerceAtLeast(0)
+        val maxWindowY = minWindowY + dpToPx(context, 320f)
+
         val newX = (params.x + dxPx.roundToInt()).coerceIn(dpToPx(context, -155f), dpToPx(context, 155f))
-        val newY = (params.y + dyPx.roundToInt()).coerceIn(dpToPx(context, -8f), dpToPx(context, 300f))
+        val newY = (params.y + dyPx.roundToInt()).coerceIn(minWindowY, maxWindowY)
         if (newX != params.x || newY != params.y) {
             params.x = newX
             params.y = newY
             runCatching { wm.updateViewLayout(view, params) }
+            val offsetBelowStatusBarDp = ((newY - minWindowY) / density).roundToInt().coerceIn(0, 320)
             context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putInt(KEY_OFFSET_X_DP, (newX / density).roundToInt())
-                .putInt(KEY_OFFSET_Y_DP, (newY / density).roundToInt())
+                .putInt(KEY_OFFSET_Y_DP, offsetBelowStatusBarDp)
                 .apply()
         }
     }
@@ -256,31 +295,31 @@ object SystemDynamicIslandManager {
 
         val mode = view.sizeMode
         val widthDp = when (mode) {
-            IslandSizeMode.MINIMIZED -> 88f
-            IslandSizeMode.COMPACT -> 228f
-            IslandSizeMode.EXPANDED -> 344f
+            IslandSizeMode.MINIMIZED -> 92f
+            IslandSizeMode.COMPACT -> 236f
+            IslandSizeMode.EXPANDED -> 346f
         }
         val heightDp = when (mode) {
-            IslandSizeMode.MINIMIZED -> 28f
-            IslandSizeMode.COMPACT -> 36f
-            IslandSizeMode.EXPANDED -> 192f
+            IslandSizeMode.MINIMIZED -> 32f
+            IslandSizeMode.COMPACT -> 40f
+            IslandSizeMode.EXPANDED -> 196f
         }
         val widthPx = dpToPx(context, widthDp)
         val heightPx = dpToPx(context, heightDp)
 
         val savedXDp = getOffsetXDp(context)
-        // Khi ở chế độ Thu nhỏ (MINIMIZED) mà người dùng chưa kéo sang ngang, tự động xếp gọn sang góc phải để không che camera!
+        // Khi ở chế độ Thu nhỏ (MINIMIZED) mà người dùng chưa kéo sang ngang, tự động xếp gọn sang góc phải!
         val effectiveXDp = when (mode) {
             IslandSizeMode.EXPANDED -> 0
             IslandSizeMode.MINIMIZED -> if (savedXDp == 0) 115 else savedXDp
             IslandSizeMode.COMPACT -> savedXDp
         }
         val xPx = dpToPx(context, effectiveXDp.toFloat())
-        val yPx = dpToPx(context, getOffsetYDp(context).toFloat())
+        val yPx = computeWindowY(context)
 
+        // Không dùng FLAG_LAYOUT_NO_LIMITS để đảm bảo vùng chạm (Hit-Test) luôn nhạy 100% trên mọi dòng máy
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
 
         if (!isAdded || layoutParams == null) {
@@ -301,7 +340,7 @@ object SystemDynamicIslandManager {
                 y = yPx
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     layoutInDisplayCutoutMode =
-                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
                 }
             }
             layoutParams = params
@@ -309,6 +348,7 @@ object SystemDynamicIslandManager {
                 wm.addView(view, params)
                 isAdded = true
             }
+            verifyAndCorrectScreenPosition(context, wm, view, params)
         } else {
             layoutParams?.let { params ->
                 if (params.width != widthPx || params.height != heightPx || params.x != xPx || params.y != yPx) {
@@ -316,6 +356,39 @@ object SystemDynamicIslandManager {
                     params.height = heightPx
                     params.x = xPx
                     params.y = yPx
+                    runCatching { wm.updateViewLayout(view, params) }
+                    verifyAndCorrectScreenPosition(context, wm, view, params)
+                }
+            }
+        }
+    }
+
+    /**
+     * Kiểm tra tọa độ thực tế trên màn hình vật lý sau khi WindowManager vẽ xong:
+     * Đảm bảo Dynamic Island luôn nằm ngay bên dưới vùng Thanh trạng thái (Status Bar),
+     * không bao giờ bị thanh trạng thái che khuất hay chặn thao tác chạm.
+     */
+    private fun verifyAndCorrectScreenPosition(
+        context: Context,
+        wm: WindowManager,
+        view: View,
+        params: WindowManager.LayoutParams
+    ) {
+        view.post {
+            if (!isAdded || floatingView !== view) return@post
+            val loc = IntArray(2)
+            view.getLocationOnScreen(loc)
+            val actualScreenY = loc[1]
+            val base = (actualScreenY - params.y).coerceAtLeast(0)
+            if (base != detectedWindowBaseY) {
+                detectedWindowBaseY = base
+            }
+            val safeTopPx = getSafeStatusBarBottomPx(context)
+            val targetScreenY = safeTopPx + dpToPx(context, getOffsetYDp(context).toFloat())
+            if (actualScreenY < safeTopPx || abs(actualScreenY - targetScreenY) > dpToPx(context, 2f)) {
+                val correctedY = (targetScreenY - detectedWindowBaseY).coerceAtLeast(0)
+                if (params.y != correctedY) {
+                    params.y = correctedY
                     runCatching { wm.updateViewLayout(view, params) }
                 }
             }
@@ -468,6 +541,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     }
 
     private val pillRect = RectF()
+    private val compactOpenAppHitRect = RectF()
     private val compactMinimizeHitRect = RectF()
     private val topOpenAppRect = RectF()
     private val topMinimizeRect = RectF()
@@ -489,6 +563,8 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     }
 
     init {
+        isClickable = true
+        isFocusable = false
         animator.start()
     }
 
@@ -623,24 +699,25 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     }
 
     /**
-     * Chế độ Viên Thuốc Chuẩn (228x36dp):
-     * - Bên trái Camera: Đĩa xoay / Biểu tượng + Thời gian đếm ngược MM:SS RÕ NÉT.
-     * - Chính giữa (92..136dp): Chừa khoảng trống cho Camera trước để không bao giờ che chữ.
-     * - Bên phải Camera: Sóng nhạc động + Nút thu nhỏ nhanh (–).
+     * Chế độ Viên Thuốc Chuẩn (236x40dp) nằm ngay bên dưới Thanh trạng thái:
+     * - Bên trái: Đĩa xoay / Biểu tượng + Thời gian đếm ngược MM:SS RÕ NÉT.
+     * - Ở giữa: Sóng nhạc động (Equalizer).
+     * - Bên phải: Nút mở nhanh App (↗) + Nút thu nhỏ nhanh (–).
+     * - Chạm vào thân viên thuốc sẽ bung ra Bảng điều khiển đầy đủ (EXPANDED).
      */
     private fun drawCompactIsland(canvas: Canvas, w: Float, h: Float) {
         val cy = h / 2f
         val timeStr = currentFormattedTime().take(5)
         val timeColor = if (timerState.isRunning) Color.parseColor("#4ADE80") else Color.parseColor("#38BDF8")
 
-        // Vùng chạm góc phải cùng (30dp cuối) để Thu nhỏ nhanh 1 chạm
+        // Vùng chạm 2 nút nhanh ở góc phải: [↗ Mở App] và [– Thu nhỏ]
         compactMinimizeHitRect.set(w - dp(30f), 0f, w, h)
+        compactOpenAppHitRect.set(w - dp(58f), 0f, w - dp(30f), h)
 
         when (style) {
             IslandDisplayStyle.SPOTIFY_YOUTUBE -> {
-                // Bên trái camera: Đĩa nhạc xoay + Số phút đếm ngược rõ nét
-                val discCenterX = dp(18f)
-                val discRadius = dp(10.5f)
+                val discCenterX = dp(20f)
+                val discRadius = dp(11.5f)
                 barPaint.shader = LinearGradient(
                     discCenterX - discRadius, cy - discRadius,
                     discCenterX + discRadius, cy + discRadius,
@@ -652,28 +729,28 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                 barPaint.shader = null
 
                 val dotAngle = phase
-                val dotX = discCenterX + cos(dotAngle) * dp(5f)
-                val dotY = cy + sin(dotAngle) * dp(5f)
+                val dotX = discCenterX + cos(dotAngle) * dp(5.2f)
+                val dotY = cy + sin(dotAngle) * dp(5.2f)
                 barPaint.color = Color.WHITE
                 canvas.drawCircle(dotX, dotY, dp(2f), barPaint)
                 barPaint.color = Color.parseColor("#05070E")
-                canvas.drawCircle(discCenterX, cy, dp(2.8f), barPaint)
+                canvas.drawCircle(discCenterX, cy, dp(3f), barPaint)
 
-                // Đồng hồ đếm ngược (MM:SS) nằm bên trái camera (32dp..78dp, không chạm camera giữa 114dp!)
-                textPaint.textSize = dp(11.5f)
+                // Đồng hồ đếm ngược (MM:SS) rõ nét
+                textPaint.textSize = dp(13f)
                 textPaint.color = timeColor
                 textPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText(timeStr, dp(33f), cy + dp(4f), textPaint)
+                canvas.drawText(timeStr, dp(38f), cy + dp(4.5f), textPaint)
 
-                // Bên phải camera: 5 cột sóng nhạc trắng + nút thu nhỏ (–)
+                // 5 cột sóng nhạc ở giữa viên thuốc
                 val barCount = 5
-                val barW = dp(2.3f)
-                val gap = dp(2.2f)
-                val startX = w - dp(32f) - (barCount * barW + (barCount - 1) * gap)
+                val barW = dp(2.6f)
+                val gap = dp(2.4f)
+                val startX = dp(104f)
                 barPaint.color = Color.WHITE
                 for (i in 0 until barCount) {
                     val ratio = 0.25f + 0.75f * ((sin(phase * 1.4f + i * 1.05f) + 1f) / 2f)
-                    val barH = dp(13.5f) * ratio
+                    val barH = dp(14.5f) * ratio
                     val left = startX + i * (barW + gap)
                     canvas.drawRoundRect(
                         left,
@@ -689,14 +766,14 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
 
             IslandDisplayStyle.NEON_CYBER -> {
                 barPaint.color = Color.parseColor("#00E5FF")
-                canvas.drawCircle(dp(16f), cy, dp(6f), barPaint)
+                canvas.drawCircle(dp(18f), cy, dp(6.5f), barPaint)
                 barPaint.color = Color.parseColor("#05070E")
-                canvas.drawCircle(dp(18.5f), cy - dp(1.5f), dp(5f), barPaint)
+                canvas.drawCircle(dp(20.5f), cy - dp(1.5f), dp(5.5f), barPaint)
 
-                textPaint.textSize = dp(11.5f)
+                textPaint.textSize = dp(13f)
                 textPaint.color = Color.WHITE
                 textPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText(timeStr, dp(28f), cy + dp(4f), textPaint)
+                canvas.drawText(timeStr, dp(32f), cy + dp(4.5f), textPaint)
 
                 val colors = intArrayOf(
                     Color.parseColor("#22C55E"),
@@ -704,13 +781,13 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                     Color.parseColor("#A855F7"),
                     Color.parseColor("#EC4899")
                 )
-                val barW = dp(2.5f)
-                val gap = dp(2.3f)
-                val startX = w - dp(32f) - (4 * barW + 3 * gap)
+                val barW = dp(2.8f)
+                val gap = dp(2.5f)
+                val startX = dp(104f)
                 for (i in 0 until 4) {
                     barPaint.color = colors[i]
                     val ratio = 0.3f + 0.7f * ((sin(phase + i * 1.1f) + 1f) / 2f)
-                    val barH = dp(13.5f) * ratio
+                    val barH = dp(14.5f) * ratio
                     val left = startX + i * (barW + gap)
                     canvas.drawRoundRect(left, cy - barH / 2f, left + barW, cy + barH / 2f, barW / 2f, barW / 2f, barPaint)
                 }
@@ -720,7 +797,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                 val path = Path()
                 path.moveTo(dp(12f), cy + dp(5f))
                 var x = dp(12f)
-                while (x <= w - dp(30f)) {
+                while (x <= w - dp(60f)) {
                     val y = cy + dp(3f) + sin((x / w) * 4f * Math.PI + phase).toFloat() * dp(3.5f)
                     path.lineTo(x, y)
                     x += dp(6f)
@@ -728,31 +805,40 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                 borderPaint.strokeWidth = dp(1.8f)
                 canvas.drawPath(path, borderPaint)
 
-                textPaint.textSize = dp(11.5f)
+                textPaint.textSize = dp(13f)
                 textPaint.color = timeColor
                 textPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText(timeStr, dp(16f), cy + dp(3.5f), textPaint)
+                canvas.drawText(timeStr, dp(18f), cy + dp(4f), textPaint)
             }
 
             IslandDisplayStyle.MINIMAL_IOS -> {
                 barPaint.color = if (timerState.isRunning) Color.parseColor("#22C55E") else Color.parseColor("#F59E0B")
-                canvas.drawCircle(dp(16f), cy, dp(4.5f), barPaint)
+                canvas.drawCircle(dp(18f), cy, dp(5f), barPaint)
 
-                textPaint.textSize = dp(11.5f)
+                textPaint.textSize = dp(13f)
                 textPaint.color = Color.WHITE
                 textPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText(timeStr, dp(26f), cy + dp(4f), textPaint)
+                canvas.drawText(timeStr, dp(30f), cy + dp(4.5f), textPaint)
             }
         }
 
-        // Vẽ nút thu nhỏ nhanh (–) ở góc phải của viên thuốc COMPACT
-        btnBgPaint.color = Color.parseColor("#1E293B")
-        val minCx = w - dp(15f)
-        canvas.drawCircle(minCx, cy, dp(8.5f), btnBgPaint)
-        subTextPaint.color = Color.parseColor("#94A3B8")
-        subTextPaint.textSize = dp(11f)
+        // Nút mở nhanh App (↗) ở bên phải viên thuốc COMPACT
+        btnBgPaint.color = Color.parseColor("#0284C7")
+        val openCx = w - dp(42f)
+        canvas.drawCircle(openCx, cy, dp(9.5f), btnBgPaint)
+        subTextPaint.color = Color.WHITE
+        subTextPaint.textSize = dp(10.5f)
         subTextPaint.textAlign = Paint.Align.CENTER
-        canvas.drawText("–", minCx, cy + dp(3.5f), subTextPaint)
+        canvas.drawText("↗", openCx, cy + dp(3.8f), subTextPaint)
+
+        // Nút thu nhỏ nhanh (–) ở góc phải cùng của viên thuốc COMPACT
+        btnBgPaint.color = Color.parseColor("#1E293B")
+        val minCx = w - dp(16f)
+        canvas.drawCircle(minCx, cy, dp(9.5f), btnBgPaint)
+        subTextPaint.color = Color.parseColor("#E2E8F0")
+        subTextPaint.textSize = dp(11.5f)
+        subTextPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("–", minCx, cy + dp(3.8f), subTextPaint)
     }
 
     /**
@@ -928,7 +1014,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
             MotionEvent.ACTION_MOVE -> {
                 val totalDx = abs(event.rawX - downRawX)
                 val totalDy = abs(event.rawY - downRawY)
-                if (sizeMode != IslandSizeMode.EXPANDED && (totalDx > dp(10f) || totalDy > dp(10f))) {
+                if (sizeMode != IslandSizeMode.EXPANDED && (totalDx > dp(12f) || totalDy > dp(12f))) {
                     isDragging = true
                     val stepDx = event.rawX - lastRawX
                     val stepDy = event.rawY - lastRawY
@@ -940,6 +1026,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP -> {
                 if (!isDragging) {
+                    runCatching { performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
                     val now = System.currentTimeMillis()
                     if (sizeMode != IslandSizeMode.EXPANDED && (now - lastTapTimeMs) < 320L) {
                         // Chạm đúp (Double-tap) vào viên thuốc: Mở thẳng vào lại App ngay lập tức!
@@ -950,6 +1037,10 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                         handleTap(event.x, event.y)
                     }
                 }
+                isDragging = false
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
                 isDragging = false
                 return true
             }
@@ -968,13 +1059,18 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                 return
             }
             IslandSizeMode.COMPACT -> {
-                // Nếu bấm vào nút (–) ở góc phải viên thuốc -> Thu nhỏ ngay lập tức!
-                if (compactMinimizeHitRect.contains(x, y)) {
-                    sizeMode = IslandSizeMode.MINIMIZED
-                    SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
-                } else {
-                    sizeMode = IslandSizeMode.EXPANDED
-                    SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                when {
+                    compactMinimizeHitRect.contains(x, y) -> {
+                        sizeMode = IslandSizeMode.MINIMIZED
+                        SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                    }
+                    compactOpenAppHitRect.contains(x, y) -> {
+                        SystemDynamicIslandManager.openAppFromOverlay(appCtx)
+                    }
+                    else -> {
+                        sizeMode = IslandSizeMode.EXPANDED
+                        SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                    }
                 }
                 return
             }
