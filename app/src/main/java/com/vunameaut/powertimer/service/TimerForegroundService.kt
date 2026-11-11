@@ -45,6 +45,7 @@ class TimerForegroundService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_ADD_10_MIN = "ACTION_ADD_10_MIN"
+        const val ACTION_LOCK_NOW = "ACTION_LOCK_NOW"
 
         const val EXTRA_SECONDS = "EXTRA_SECONDS"
         const val EXTRA_MODE = "EXTRA_MODE"
@@ -131,6 +132,7 @@ class TimerForegroundService : Service() {
         timerJob?.cancel()
         shakeDetector?.stop()
         cancelExactAlarm()
+        NativeMediaIslandBridge.stop()
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
         }
@@ -160,6 +162,14 @@ class TimerForegroundService : Service() {
             ACTION_ADD_10_MIN -> {
                 handleExtendTenMinutes()
             }
+            ACTION_LOCK_NOW -> {
+                val current = _timerFlow.value
+                val mode = current.selectedMode
+                stopCountdown()
+                serviceScope.launch {
+                    shutdownManager.executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -173,6 +183,7 @@ class TimerForegroundService : Service() {
                 totalSeconds = newTotal,
                 remainingSeconds = newRemaining
             )
+            NativeMediaIslandBridge.startOrUpdate(applicationContext, newRemaining, newTotal, current.selectedMode)
             scheduleExactAlarm(newRemaining, current.selectedMode)
             updateNotification(newRemaining, current.selectedMode)
             SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
@@ -204,6 +215,7 @@ class TimerForegroundService : Service() {
             shakeToExtend = shakeToExtend
         )
 
+        NativeMediaIslandBridge.startOrUpdate(applicationContext, seconds, seconds, mode)
         startForeground(NOTIFICATION_ID, buildNotification(seconds, mode))
         scheduleExactAlarm(seconds, mode)
         SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
@@ -222,6 +234,12 @@ class TimerForegroundService : Service() {
                 delay(1000L)
                 remaining--
                 _timerFlow.value = _timerFlow.value.copy(remainingSeconds = remaining)
+                NativeMediaIslandBridge.startOrUpdate(
+                    applicationContext,
+                    remaining,
+                    _timerFlow.value.totalSeconds,
+                    mode
+                )
                 SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
 
                 // Cảnh báo rung trước 30 giây
@@ -246,6 +264,7 @@ class TimerForegroundService : Service() {
         timerJob?.cancel()
         shakeDetector?.stop()
         cancelExactAlarm()
+        NativeMediaIslandBridge.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -343,7 +362,17 @@ class TimerForegroundService : Service() {
     }
 
     private fun buildNotification(remainingSeconds: Long, mode: ShutdownMode): Notification {
-        val openAppIntent = Intent(this, MainActivity::class.java)
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            putExtra("OPEN_TOOL_ID", "power_timer")
+        }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -367,10 +396,69 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val totalSeconds = _timerFlow.value.totalSeconds.coerceAtLeast(1L)
-        val progress = ((remainingSeconds * 100) / totalSeconds).toInt().coerceIn(0, 100)
+        val lockNowIntent = Intent(this, TimerForegroundService::class.java).apply { action = ACTION_LOCK_NOW }
+        val lockNowPendingIntent = PendingIntent.getService(
+            this,
+            3,
+            lockNowIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
-        // Đồng hồ đếm ngược do hệ thống tự vẽ mỗi giây (không tốn pin cập nhật notification)
+        val totalSeconds = _timerFlow.value.totalSeconds.coerceAtLeast(1L)
+        val formatted = _timerFlow.value.formattedRemaining.ifBlank { "30:00" }
+        val artwork = NativeMediaIslandBridge.getCurrentArtwork(remainingSeconds, totalSeconds)
+        val sessionToken = NativeMediaIslandBridge.getSessionToken(this)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && sessionToken != null) {
+            val mediaStyle = Notification.MediaStyle()
+                .setMediaSession(sessionToken)
+                .setShowActionsInCompactView(0, 1, 2)
+
+            val builder = Notification.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_timer)
+                .setLargeIcon(artwork)
+                .setColor(0xFF22C55E.toInt())
+                .setContentTitle("⏳ Còn $formatted • Hẹn giờ tắt màn")
+                .setContentText("${mode.badge}  •  Bấm ⏭ để +10 phút")
+                .setSubText("Tools Hub")
+                .setStyle(mediaStyle)
+                .setContentIntent(openAppPendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_TRANSPORT)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setWhen(System.currentTimeMillis() + remainingSeconds * 1000L)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .addAction(
+                    Notification.Action.Builder(
+                        R.drawable.ic_stat_add,
+                        "+10 phút",
+                        add10mPendingIntent
+                    ).build()
+                )
+                .addAction(
+                    Notification.Action.Builder(
+                        R.drawable.ic_stat_timer,
+                        "Tắt màn",
+                        lockNowPendingIntent
+                    ).build()
+                )
+                .addAction(
+                    Notification.Action.Builder(
+                        R.drawable.ic_stat_stop,
+                        "Dừng",
+                        stopPendingIntent
+                    ).build()
+                )
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            }
+            return builder.build()
+        }
+
+        val progress = ((remainingSeconds * 100) / totalSeconds).toInt().coerceIn(0, 100)
         val views = RemoteViews(packageName, R.layout.notification_timer).apply {
             setTextViewText(R.id.notif_title, "Hẹn giờ tắt màn hình")
             setTextViewText(R.id.notif_subtitle, "${mode.badge}  •  Lắc máy để +10 phút")
