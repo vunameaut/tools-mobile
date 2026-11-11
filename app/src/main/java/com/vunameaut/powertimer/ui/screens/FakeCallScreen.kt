@@ -11,6 +11,7 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
@@ -120,7 +121,17 @@ import com.vunameaut.powertimer.ui.theme.AccentGreen
 import com.vunameaut.powertimer.ui.theme.AccentPink
 import com.vunameaut.powertimer.ui.theme.AccentRed
 import com.vunameaut.powertimer.ui.theme.PowerTimerTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Locale
 
 data class FakeCallerPreset(
@@ -187,6 +198,141 @@ object FakeCallScheduler {
     private const val ALARM_REQ_CODE = 88991
     const val CHANNEL_ID = "fake_incoming_call_channel"
 
+    private val voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var activeVoicePlayer: MediaPlayer? = null
+
+    /**
+     * Tải trước (Pre-cache) file âm thanh giọng đọc Tiếng Việt tự nhiên (tl=vi) vào bộ nhớ đệm
+     * để khi cuộc gọi đổ chuông và bấm Nghe máy, giọng Tiếng Việt phát ra tức thì, không bao giờ bị đọc giọng Tiếng Anh.
+     */
+    fun preCacheVietnameseVoice(context: Context, script: String) {
+        val clean = script.trim()
+        if (clean.isBlank()) return
+        val appCtx = context.applicationContext
+        voiceScope.launch(Dispatchers.IO) {
+            getOrDownloadVietnameseVoiceMp3(appCtx, clean)
+        }
+    }
+
+    fun getOrDownloadVietnameseVoiceMp3(context: Context, script: String): File? {
+        val clean = script.trim().take(195)
+        if (clean.isBlank()) return null
+        return runCatching {
+            val cacheDir = File(context.cacheDir, "soundbox_tts_cache").apply { mkdirs() }
+            val hash = MessageDigest.getInstance("MD5")
+                .digest(clean.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            val audioFile = File(cacheDir, "vi_call_$hash.mp3")
+
+            if (!audioFile.exists() || audioFile.length() < 256L) {
+                val encoded = URLEncoder.encode(clean, "UTF-8")
+                val urlStr = "https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=$encoded"
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 4000
+                    readTimeout = 5000
+                    requestMethod = "GET"
+                    setRequestProperty(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                    )
+                }
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    conn.disconnect()
+                    return null
+                }
+                conn.inputStream.use { input ->
+                    audioFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                conn.disconnect()
+            }
+            if (audioFile.exists() && audioFile.length() >= 256L) audioFile else null
+        }.getOrNull()
+    }
+
+    fun playVietnameseVoiceScript(
+        context: Context,
+        script: String,
+        useSpeaker: Boolean = true,
+        fallbackTts: TextToSpeech? = null
+    ) {
+        val clean = script.trim()
+        if (clean.isBlank()) return
+        val appCtx = context.applicationContext
+
+        voiceScope.launch {
+            // Đảm bảo âm lượng đủ nghe
+            runCatching {
+                val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                if (cur == 0 && max > 0) {
+                    am.setStreamVolume(AudioManager.STREAM_MUSIC, (max * 0.65f).toInt().coerceAtLeast(1), 0)
+                }
+            }
+
+            val mp3File = withContext(Dispatchers.IO) {
+                getOrDownloadVietnameseVoiceMp3(appCtx, clean)
+            }
+
+            if (mp3File != null) {
+                runCatching {
+                    stopActiveVoice()
+                    val mp = MediaPlayer()
+                    activeVoicePlayer = mp
+                    mp.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    mp.setDataSource(mp3File.absolutePath)
+                    mp.prepare()
+                    val vol = if (useSpeaker) 1.0f else 0.55f
+                    mp.setVolume(vol, vol)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        runCatching {
+                            mp.playbackParams = PlaybackParams().setSpeed(1.08f)
+                        }
+                    }
+                    mp.setOnCompletionListener { player ->
+                        player.release()
+                        if (activeVoicePlayer === player) activeVoicePlayer = null
+                    }
+                    mp.start()
+                    return@launch
+                }
+            }
+
+            // Dự phòng khi hoàn toàn mất mạng và chưa có file cache
+            fallbackTts?.let { engine ->
+                runCatching {
+                    val viLocale = Locale.forLanguageTag("vi-VN")
+                    engine.language = viLocale
+                    val viVoice = engine.voices?.firstOrNull {
+                        it.locale.language.equals("vi", ignoreCase = true)
+                    }
+                    if (viVoice != null) {
+                        engine.voice = viVoice
+                    }
+                    val params = Bundle().apply {
+                        putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+                    }
+                    engine.speak(clean, TextToSpeech.QUEUE_FLUSH, params, "fake_call_vi_fallback")
+                }
+            }
+        }
+    }
+
+    fun stopActiveVoice() {
+        runCatching {
+            activeVoicePlayer?.stop()
+            activeVoicePlayer?.release()
+        }
+        activeVoicePlayer = null
+    }
+
     fun scheduleFakeCall(
         context: Context,
         delaySeconds: Int,
@@ -208,6 +354,11 @@ object FakeCallScheduler {
             .putString(KEY_VOICE_SCRIPT, voiceScript)
             .putBoolean(KEY_AUTO_SPEAK, autoSpeakOnAnswer)
             .apply()
+
+        // Tải sẵn giọng đọc Tiếng Việt vào bộ nhớ đệm ngay khi bấm hẹn giờ
+        if (voiceScript.isNotBlank()) {
+            preCacheVietnameseVoice(context, voiceScript)
+        }
 
         if (delaySeconds <= 0) {
             launchIncomingCallNow(context)
@@ -537,6 +688,30 @@ fun FakeCallTool(onExit: () -> Unit) {
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    OutlinedButton(
+                        onClick = {
+                            if (voiceScript.isNotBlank()) {
+                                Toast.makeText(context, "🔊 Đang phát thử giọng đọc Tiếng Việt...", Toast.LENGTH_SHORT).show()
+                                FakeCallScheduler.playVietnameseVoiceScript(
+                                    context = context,
+                                    script = voiceScript,
+                                    useSpeaker = true
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "🔊 Nghe thử lời thoại Tiếng Việt chuẩn",
+                            color = AccentCyan,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -737,13 +912,17 @@ class FakeCallIncomingActivity : ComponentActivity() {
         val voiceScript = prefs.getString(FakeCallScheduler.KEY_VOICE_SCRIPT, "") ?: ""
         val autoSpeak = prefs.getBoolean(FakeCallScheduler.KEY_AUTO_SPEAK, true)
 
-        tts = TextToSpeech(this) { status ->
+        if (voiceScript.isNotBlank()) {
+            FakeCallScheduler.preCacheVietnameseVoice(this, voiceScript)
+        }
+
+        tts = TextToSpeech(this, { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale("vi", "VN")
+                tts?.language = Locale.forLanguageTag("vi-VN")
                 tts?.setSpeechRate(1.05f)
                 ttsReady = true
             }
-        }
+        }, "com.google.android.tts")
 
         startRingingAndVibration()
 
@@ -818,19 +997,12 @@ class FakeCallIncomingActivity : ComponentActivity() {
     }
 
     private fun speakCallerScript(script: String, useSpeaker: Boolean) {
-        if (!ttsReady) return
-        runCatching {
-            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            @Suppress("DEPRECATION")
-            am.isSpeakerphoneOn = useSpeaker
-            val params = Bundle().apply {
-                putInt(
-                    TextToSpeech.Engine.KEY_PARAM_STREAM,
-                    if (useSpeaker) AudioManager.STREAM_MUSIC else AudioManager.STREAM_VOICE_CALL
-                )
-            }
-            tts?.speak(script, TextToSpeech.QUEUE_FLUSH, params, "fake_caller_voice")
-        }
+        FakeCallScheduler.playVietnameseVoiceScript(
+            context = this,
+            script = script,
+            useSpeaker = useSpeaker,
+            fallbackTts = if (ttsReady) tts else null
+        )
     }
 
     private fun stopRingingAndVibration() {
@@ -851,6 +1023,7 @@ class FakeCallIncomingActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopRingingAndVibration()
+        FakeCallScheduler.stopActiveVoice()
         runCatching {
             tts?.stop()
             tts?.shutdown()

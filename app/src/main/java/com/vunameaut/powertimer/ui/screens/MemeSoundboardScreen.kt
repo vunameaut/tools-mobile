@@ -224,6 +224,7 @@ fun MemeSoundboardTool(onExit: () -> Unit) {
             currentTrack?.release()
         }
         currentTrack = null
+        FakeCallScheduler.stopActiveVoice()
         runCatching { ttsRef?.stop() }
         activeSoundId = null
     }
@@ -244,12 +245,12 @@ fun MemeSoundboardTool(onExit: () -> Unit) {
         }
 
         if (includeVoiceMeme && sound.voiceLine != null) {
-            runCatching {
-                val params = Bundle().apply {
-                    putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-                }
-                ttsRef?.speak(sound.voiceLine, TextToSpeech.QUEUE_FLUSH, params, "meme_${sound.id}")
-            }
+            FakeCallScheduler.playVietnameseVoiceScript(
+                context = context,
+                script = sound.voiceLine,
+                useSpeaker = true,
+                fallbackTts = ttsRef
+            )
         }
 
         currentJob = scope.launch(Dispatchers.Default) {

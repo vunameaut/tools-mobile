@@ -70,6 +70,10 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
 
+        savedInstanceState?.getString("saved_current_route")?.let { savedRoute ->
+            currentRoute = savedRoute
+        }
+
         val waterdropPrefs = getSharedPreferences("waterdrop_island_prefs", Context.MODE_PRIVATE)
         showWaterdropPreview = waterdropPrefs.getBoolean("always_show_waterdrop", true)
 
@@ -140,6 +144,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("saved_current_route", currentRoute)
     }
 
     override fun onNewIntent(intent: Intent) {

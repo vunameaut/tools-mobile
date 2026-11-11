@@ -66,6 +66,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -120,14 +121,14 @@ fun LedBannerTool(onExit: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? Activity
 
-    var bannerText by remember { mutableStateOf("QUẨY LÊN ANH EM ƠI 🔥🔥🔥") }
-    var textColorHex by remember { mutableLongStateOf(0xFF00FF66L) }
-    var bgColorHex by remember { mutableLongStateOf(0xFF050505L) }
-    var speedMultiplier by remember { mutableFloatStateOf(1.4f) } // 0f = đứng yên, 0.5f..3.5f
-    var fontScale by remember { mutableFloatStateOf(0.68f) } // tỷ lệ theo chiều cao khung
-    var dotMatrixOverlay by remember { mutableStateOf(true) }
-    var strobeBlink by remember { mutableStateOf(false) }
-    var isFullScreenLandscape by remember { mutableStateOf(false) }
+    var bannerText by rememberSaveable { mutableStateOf("QUẨY LÊN ANH EM ƠI 🔥🔥🔥") }
+    var textColorHex by rememberSaveable { mutableLongStateOf(0xFF00FF66L) }
+    var bgColorHex by rememberSaveable { mutableLongStateOf(0xFF050505L) }
+    var speedMultiplier by rememberSaveable { mutableFloatStateOf(1.4f) } // 0f = đứng yên, 0.5f..3.5f
+    var fontScale by rememberSaveable { mutableFloatStateOf(0.68f) } // tỷ lệ theo chiều cao khung
+    var dotMatrixOverlay by rememberSaveable { mutableStateOf(true) }
+    var strobeBlink by rememberSaveable { mutableStateOf(false) }
+    var isFullScreenLandscape by rememberSaveable { mutableStateOf(false) }
 
     BackHandler {
         if (isFullScreenLandscape) {
@@ -138,10 +139,9 @@ fun LedBannerTool(onExit: () -> Unit) {
     }
 
     // Tự động xoay ngang màn hình & đẩy độ sáng 100% khi bật Toàn Màn Hình
-    DisposableEffect(isFullScreenLandscape) {
-        val window = activity?.window
-        val prevBrightness = window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        if (isFullScreenLandscape && activity != null && window != null) {
+    LaunchedEffect(isFullScreenLandscape) {
+        val window = activity?.window ?: return@LaunchedEffect
+        if (isFullScreenLandscape) {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             val params = window.attributes
@@ -152,17 +152,20 @@ fun LedBannerTool(onExit: () -> Unit) {
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
-        } else if (activity != null && window != null) {
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             val params = window.attributes
-            params.screenBrightness = prevBrightness
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             window.attributes = params
 
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
             insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
+    }
 
+    DisposableEffect(Unit) {
         onDispose {
+            val window = activity?.window
             if (activity != null && window != null) {
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 val params = window.attributes
