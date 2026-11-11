@@ -457,7 +457,7 @@ private fun HomeScreenWidgetsBanner() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 QuickTileChip(
-                    label = "⚡ Ghim Tiện ích 4 Công Cụ",
+                    label = "⚡ Ghim 4 Công Cụ",
                     modifier = Modifier.weight(1f),
                     onClick = {
                         ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
@@ -468,7 +468,7 @@ private fun HomeScreenWidgetsBanner() {
                     }
                 )
                 QuickTileChip(
-                    label = "🏦 Ghim Tiện ích Mã VietQR",
+                    label = "🏦 Ghim Mã VietQR",
                     modifier = Modifier.weight(1f),
                     onClick = {
                         ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
@@ -503,10 +503,11 @@ private fun QuickTileChip(
         ) {
             Text(
                 text = label,
-                fontSize = 11.5.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

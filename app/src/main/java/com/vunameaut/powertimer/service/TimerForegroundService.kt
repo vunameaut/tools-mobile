@@ -94,6 +94,18 @@ class TimerForegroundService : Service() {
             }
             context.startService(intent)
         }
+
+        fun updatePresetSeconds(context: Context, seconds: Long, mode: ShutdownMode? = null) {
+            val current = _timerFlow.value
+            if (!current.isRunning) {
+                _timerFlow.value = current.copy(
+                    totalSeconds = seconds,
+                    remainingSeconds = seconds,
+                    selectedMode = mode ?: current.selectedMode
+                )
+                SystemDynamicIslandManager.refreshOverlay(context.applicationContext, _timerFlow.value)
+            }
+        }
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())

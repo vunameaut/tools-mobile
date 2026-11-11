@@ -452,7 +452,10 @@ fun QuickOcrClipboardTool(
                                     Text(
                                         text = "📄 Toàn bộ văn bản trích xuất:",
                                         fontWeight = FontWeight.Bold,
-                                        color = AccentAmber
+                                        color = AccentAmber,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     )
                                     Button(
                                         onClick = {
@@ -471,7 +474,13 @@ fun QuickOcrClipboardTool(
                                     ) {
                                         Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Copy tất cả", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Text(
+                                            text = "Copy tất cả",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
                                     }
                                 }
 

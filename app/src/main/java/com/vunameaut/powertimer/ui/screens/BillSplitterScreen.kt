@@ -445,26 +445,22 @@ fun BillSplitterTool(onExit: () -> Unit) {
                         fontSize = 14.sp
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = newExpenseTitle,
-                            onValueChange = { newExpenseTitle = it },
-                            label = { Text("Khoản chi (VD: Ăn lẩu, Cafe)") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1.2f)
-                        )
-                        OutlinedTextField(
-                            value = newExpenseAmount,
-                            onValueChange = { newExpenseAmount = it.filter { c -> c.isDigit() } },
-                            label = { Text("Số tiền (VNĐ)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    OutlinedTextField(
+                        value = newExpenseTitle,
+                        onValueChange = { newExpenseTitle = it },
+                        label = { Text("Tên khoản chi (VD: Tăng 1: Ăn lẩu, Cafe...)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = newExpenseAmount,
+                        onValueChange = { newExpenseAmount = it.filter { c -> c.isDigit() } },
+                        label = { Text("Số tiền khoản này (VNĐ)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     // Chọn người đã ứng tiền trả trước khoản này
                     Text(
@@ -483,7 +479,8 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                     Text(
                                         text = "$mName trả",
                                         fontWeight = if (isPayer) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
@@ -504,17 +501,26 @@ fun BillSplitterTool(onExit: () -> Unit) {
                             text = "🍽️ Chia cho những ai? (${selectedParticipants.intersect(members.toSet()).size}/${members.size} người)",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Chọn tất cả",
-                            fontSize = 11.5.sp,
-                            color = AccentCyan,
-                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .weight(1f)
+                                .padding(end = 8.dp)
                         )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AccentCyan.copy(alpha = 0.16f),
+                            onClick = { selectedParticipants = members.toSet() }
+                        ) {
+                            Text(
+                                text = "Chọn tất cả",
+                                fontSize = 11.5.sp,
+                                color = AccentCyan,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -531,7 +537,7 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                         selectedParticipants + mName
                                     }
                                 },
-                                label = { Text(mName, fontSize = 12.sp, maxLines = 1) },
+                                label = { Text(mName, fontSize = 12.sp, maxLines = 1, softWrap = false) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = AccentCyan,
                                     selectedLabelColor = Color.Black
@@ -540,52 +546,53 @@ fun BillSplitterTool(onExit: () -> Unit) {
                         }
                     }
 
+                    Button(
+                        onClick = {
+                            val amt = newExpenseAmount.replace(Regex("[^0-9]"), "").toLongOrNull() ?: 0L
+                            if (amt <= 0L) {
+                                Toast.makeText(context, "Vui lòng nhập số tiền hợp lệ!", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            val payer = selectedPayer.takeIf { it in members } ?: members.firstOrNull().orEmpty()
+                            val validParts = selectedParticipants.intersect(members.toSet()).ifEmpty { members.toSet() }
+                            expenses.add(
+                                ExpenseEntry(
+                                    title = newExpenseTitle.trim().ifBlank { "Khoản chi #${expenses.size + 1}" },
+                                    amount = amt,
+                                    paidBy = payer,
+                                    participants = validParts
+                                )
+                            )
+                            newExpenseTitle = ""
+                            newExpenseAmount = ""
+                            selectedParticipants = members.toSet()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentAmber,
+                            contentColor = Color.Black
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Thêm khoản chi này vào danh sách",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.5.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = {
-                                val amt = newExpenseAmount.replace(Regex("[^0-9]"), "").toLongOrNull() ?: 0L
-                                if (amt <= 0L) {
-                                    Toast.makeText(context, "Vui lòng nhập số tiền hợp lệ!", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                val payer = selectedPayer.takeIf { it in members } ?: members.firstOrNull().orEmpty()
-                                val validParts = selectedParticipants.intersect(members.toSet()).ifEmpty { members.toSet() }
-                                expenses.add(
-                                    ExpenseEntry(
-                                        title = newExpenseTitle.trim().ifBlank { "Khoản chi #${expenses.size + 1}" },
-                                        amount = amt,
-                                        paidBy = payer,
-                                        participants = validParts
-                                    )
-                                )
-                                newExpenseTitle = ""
-                                newExpenseAmount = ""
-                                selectedParticipants = members.toSet()
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AccentAmber,
-                                contentColor = Color.Black
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(46.dp)
-                        ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "Thêm khoản chi",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
                         OutlinedButton(
                             onClick = {
                                 val granted = ContextCompat.checkSelfPermission(
@@ -596,27 +603,43 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                 else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                             },
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
-                                .weight(0.85f)
-                                .height(46.dp)
+                                .weight(1f)
+                                .height(44.dp)
                         ) {
                             Icon(Icons.Rounded.CameraAlt, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Chụp Bill", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Chụp Hóa Đơn",
+                                color = AccentCyan,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         OutlinedButton(
                             onClick = { galleryLauncher.launch("image/*") },
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
-                                .weight(0.85f)
-                                .height(46.dp)
+                                .weight(1f)
+                                .height(44.dp)
                         ) {
                             Icon(Icons.Rounded.Image, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Ảnh Bill", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Chọn Ảnh Bill",
+                                color = AccentCyan,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
 
@@ -654,13 +677,18 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                 text = "🧾 Các khoản đã chi (${expenses.size} khoản):",
                                 fontWeight = FontWeight.Bold,
                                 color = AccentCyan,
-                                fontSize = 13.5.sp
+                                fontSize = 13.5.sp,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp)
                             )
                             Text(
                                 text = "Tổng: ${formatCurrencyVnd(grandTotal)}",
                                 fontWeight = FontWeight.ExtraBold,
                                 color = AccentGreen,
-                                fontSize = 13.5.sp
+                                fontSize = 13.5.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
@@ -675,7 +703,11 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
+                                    ) {
                                         Text(
                                             text = "${idx + 1}. ${exp.title}",
                                             fontWeight = FontWeight.Bold,
@@ -693,7 +725,9 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                             color = AccentAmber,
                                             fontWeight = FontWeight.ExtraBold,
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 13.5.sp
+                                            fontSize = 13.5.sp,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                         IconButton(
                                             onClick = { expenses.removeAt(idx) },
@@ -742,7 +776,7 @@ fun BillSplitterTool(onExit: () -> Unit) {
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                         val statusText = when {
-                            isPositive -> "Được nhận lại +${formatCurrencyVnd(b.netBalance)}"
+                            isPositive -> "Được nhận +${formatCurrencyVnd(b.netBalance)}"
                             isNegative -> "Còn nợ ${formatCurrencyVnd(b.netBalance)}"
                             else -> "Đã cân bằng (0 đ)"
                         }
@@ -752,28 +786,42 @@ fun BillSplitterTool(onExit: () -> Unit) {
                             color = MaterialTheme.colorScheme.surface,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
                                     Text(
                                         text = b.name,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 14.sp
+                                        fontSize = 14.5.sp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     )
-                                    Text(
-                                        text = "Đã chi: ${formatCurrencyVnd(b.paidAmount)} • Phần ăn: ${formatCurrencyVnd(b.shareAmount)}",
-                                        fontSize = 11.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = statusColor.copy(alpha = 0.14f)
+                                    ) {
+                                        Text(
+                                            text = statusText,
+                                            color = statusColor,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
                                 }
                                 Text(
-                                    text = statusText,
-                                    color = statusColor,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 12.5.sp
+                                    text = "Đã chi: ${formatCurrencyVnd(b.paidAmount)}  •  Phần đóng: ${formatCurrencyVnd(b.shareAmount)}",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -803,7 +851,9 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     ) {
                                         Text(
                                             text = t.fromMember,
@@ -829,7 +879,9 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                         fontWeight = FontWeight.ExtraBold,
                                         fontFamily = FontFamily.Monospace,
                                         color = Color.White,
-                                        fontSize = 14.5.sp
+                                        fontSize = 14.5.sp,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -961,6 +1013,7 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                     text = "Gửi vào Nhóm Chat",
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -986,6 +1039,7 @@ fun BillSplitterTool(onExit: () -> Unit) {
                                     color = AccentCyan,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }

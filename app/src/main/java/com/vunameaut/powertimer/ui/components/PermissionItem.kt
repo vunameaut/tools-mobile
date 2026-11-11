@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import com.vunameaut.powertimer.ui.theme.AccentGreen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -109,13 +110,20 @@ fun PermissionItem(
                 FilledTonalButton(
                     onClick = onGrantClick,
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = AccentCyan,
                         contentColor = Color(0xFF00363D)
                     ),
-                    modifier = Modifier.padding(start = 12.dp)
+                    modifier = Modifier.padding(start = 10.dp)
                 ) {
-                    Text(text = "Cấp quyền", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(
+                        text = "Cấp quyền",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }

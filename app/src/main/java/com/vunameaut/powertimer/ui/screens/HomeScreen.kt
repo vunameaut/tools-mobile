@@ -114,11 +114,15 @@ fun HomeScreen(
     var islandOffsetY by remember {
         mutableStateOf(SystemDynamicIslandManager.getOffsetYDp(context))
     }
+    var isIslandMinimized by remember {
+        mutableStateOf(SystemDynamicIslandManager.isMinimized(context))
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 canDrawOverlays = SystemDynamicIslandManager.canDrawOverlays(context)
+                isIslandMinimized = SystemDynamicIslandManager.isMinimized(context)
                 SystemDynamicIslandManager.refreshOverlay(context)
             }
         }
@@ -277,13 +281,16 @@ fun HomeScreen(
                         Button(
                             onClick = { viewModel.disableAccessibilityForBanking() },
                             shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
                         ) {
                             Text(
                                 text = "Tắt Trợ năng",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -433,13 +440,66 @@ fun HomeScreen(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        isIslandMinimized = !isIslandMinimized
+                                        SystemDynamicIslandManager.setMinimized(context, isIslandMinimized)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                ) {
+                                    Text(
+                                        text = if (isIslandMinimized) "🔍 Bung viên thuốc" else "🗕 Thu nhỏ gọn",
+                                        fontSize = 11.5.sp,
+                                        color = AccentGreen,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        SystemDynamicIslandManager.resetPositionAndSize(context)
+                                        islandOffsetY = SystemDynamicIslandManager.getOffsetYDp(context)
+                                        isIslandMinimized = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                ) {
+                                    Text(
+                                        text = "🔄 Về giữa Camera",
+                                        fontSize = 11.5.sp,
+                                        color = AccentCyan,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Căn chỉnh vị trí khớp Camera (${islandOffsetY}dp):",
+                                    text = "Chỉnh độ cao (${islandOffsetY}dp) hoặc giữ kéo trực tiếp:",
                                     fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     OutlinedButton(
@@ -450,20 +510,27 @@ fun HomeScreen(
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("▲ Lên", fontSize = 11.sp, color = AccentCyan, maxLines = 1)
+                                        Text("▲ Lên", fontSize = 11.sp, color = AccentCyan, maxLines = 1, softWrap = false)
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            islandOffsetY = (islandOffsetY + 2).coerceAtMost(40)
+                                            islandOffsetY = (islandOffsetY + 2).coerceAtMost(260)
                                             SystemDynamicIslandManager.setOffsetYDp(context, islandOffsetY)
                                         },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("▼ Xuống", fontSize = 11.sp, color = AccentCyan, maxLines = 1)
+                                        Text("▼ Xuống", fontSize = 11.sp, color = AccentCyan, maxLines = 1, softWrap = false)
                                     }
                                 }
                             }
+
+                            Text(
+                                text = "💡 Mẹo: Chạm đúp vào viên thuốc để mở nhanh lại App, bấm nút (–) ở mép phải viên thuốc để thu nhỏ gọn, hoặc giữ kéo đi bất kỳ đâu.",
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

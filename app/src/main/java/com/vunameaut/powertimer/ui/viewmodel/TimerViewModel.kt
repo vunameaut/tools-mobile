@@ -67,18 +67,22 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTimeInMinutes(minutes: Long) {
         if (!timerState.value.isRunning) {
-            _selectedSeconds.value = minutes * 60
+            val secs = minutes * 60
+            _selectedSeconds.value = secs
+            TimerForegroundService.updatePresetSeconds(getApplication(), secs, _selectedMode.value)
         }
     }
 
     fun setCustomSeconds(seconds: Long) {
         if (!timerState.value.isRunning) {
             _selectedSeconds.value = seconds
+            TimerForegroundService.updatePresetSeconds(getApplication(), seconds, _selectedMode.value)
         }
     }
 
     fun setMode(mode: ShutdownMode) {
         _selectedMode.value = mode
+        TimerForegroundService.updatePresetSeconds(getApplication(), _selectedSeconds.value, mode)
         // Nếu người dùng chọn chế độ Chuẩn Ngân Hàng, tự động tắt/ẩn Trợ năng nếu đang bật
         if (!mode.requiresAccessibility) {
             permissionManager.disableAccessibilityForBanking()

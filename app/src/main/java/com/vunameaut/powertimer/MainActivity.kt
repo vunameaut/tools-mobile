@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
 
                         // Hiệu ứng tương tác Màn hình Giọt nước (Dynamic Island kiểu YouTube / Spotify)
                         WaterdropIslandOverlay(
-                            forceVisibleForPreview = showWaterdropPreview && currentRoute == "tool:power_timer",
+                            forceVisibleForPreview = showWaterdropPreview,
                             onOpenPowerTimerScreen = if (currentRoute != "tool:power_timer") {
                                 { currentRoute = "tool:power_timer" }
                             } else null,

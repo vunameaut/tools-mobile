@@ -123,6 +123,7 @@ fun WaterdropIslandOverlay(
         SystemDynamicIslandManager.isEnabled(context)
     val isVisible = !systemOverlayActive && (timerState.isRunning || forceVisibleForPreview)
     var isExpanded by remember { mutableStateOf(false) }
+    var isMinimized by remember { mutableStateOf(SystemDynamicIslandManager.isMinimized(context)) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "waterdrop_anim")
     val wavePhase by infiniteTransition.animateFloat(
@@ -156,7 +157,11 @@ fun WaterdropIslandOverlay(
             .zIndex(99f)
     ) {
         val pillWidth by animateDpAsState(
-            targetValue = if (isExpanded) 348.dp else 218.dp,
+            targetValue = when {
+                isExpanded -> 348.dp
+                isMinimized -> 90.dp
+                else -> 218.dp
+            },
             animationSpec = spring(
                 dampingRatio = 0.70f,
                 stiffness = Spring.StiffnessMediumLow
@@ -170,7 +175,7 @@ fun WaterdropIslandOverlay(
         )
 
         Box(
-            contentAlignment = Alignment.TopCenter,
+            contentAlignment = if (isMinimized && !isExpanded) Alignment.TopEnd else Alignment.TopCenter,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 6.dp, start = 12.dp, end = 12.dp)
@@ -216,18 +221,49 @@ fun WaterdropIslandOverlay(
                         indication = null
                     ) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isExpanded = !isExpanded
+                        if (isMinimized && !isExpanded) {
+                            isMinimized = false
+                            SystemDynamicIslandManager.setMinimized(context, false)
+                        } else {
+                            isExpanded = !isExpanded
+                        }
                     }
             ) {
                 AnimatedContent(
-                    targetState = isExpanded,
+                    targetState = Pair(isExpanded, isMinimized),
                     transitionSpec = {
                         (fadeIn(tween(220)) + scaleIn(initialScale = 0.92f)) togetherWith
                             (fadeOut(tween(150)) + scaleOut(targetScale = 0.92f))
                     },
                     label = "island_body"
-                ) { expanded ->
-                    if (!expanded) {
+                ) { (expanded, minimized) ->
+                    if (!expanded && minimized) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(28.dp)
+                                .padding(horizontal = 8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (timerState.isRunning) AccentGreen else AccentCyan)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = timerState.formattedRemaining.ifBlank { "30:00" }.take(5),
+                                color = if (timerState.isRunning) AccentGreen else Color.White,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    } else if (!expanded) {
                         // ================= TRẠNG THÁI THU GỌN ÔM SÁT GIỌT NƯỚC =================
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -257,8 +293,8 @@ fun WaterdropIslandOverlay(
                                     )
                                 }
                                 Text(
-                                    text = if (timerState.isRunning) timerState.formattedRemaining else "30:00",
-                                    color = Color.White,
+                                    text = timerState.formattedRemaining.ifBlank { "30:00" },
+                                    color = if (timerState.isRunning) AccentGreen else Color.White,
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontFamily = FontFamily.Monospace
@@ -355,11 +391,25 @@ fun WaterdropIslandOverlay(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    SpotifyStyleEqualizerBars(
-                                        phase = wavePhase,
-                                        isActive = true,
-                                        modifier = Modifier.size(width = 32.dp, height = 18.dp)
-                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.1f),
+                                        modifier = Modifier.clickable {
+                                            isExpanded = false
+                                            isMinimized = true
+                                            SystemDynamicIslandManager.setMinimized(context, true)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = "🗕 Thu nhỏ",
+                                            color = AccentAmber,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                        )
+                                    }
                                     IconButton(
                                         onClick = { isExpanded = false },
                                         modifier = Modifier.size(26.dp)
@@ -382,6 +432,10 @@ fun WaterdropIslandOverlay(
                                     .height(54.dp)
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(Color(0xFF0D1326))
+                                    .clickable(enabled = onOpenPowerTimerScreen != null) {
+                                        isExpanded = false
+                                        onOpenPowerTimerScreen?.invoke()
+                                    }
                             ) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
                                     val path = Path()
@@ -417,7 +471,7 @@ fun WaterdropIslandOverlay(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (timerState.isRunning) timerState.formattedRemaining else "30:00",
+                                        text = timerState.formattedRemaining.ifBlank { "30:00" },
                                         color = AccentCyan,
                                         fontSize = 26.sp,
                                         fontWeight = FontWeight.ExtraBold,

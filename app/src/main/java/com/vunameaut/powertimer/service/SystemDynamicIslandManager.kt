@@ -2,6 +2,9 @@ package com.vunameaut.powertimer.service
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.app.ActivityOptions
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -30,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 enum class IslandDisplayStyle(
@@ -39,12 +43,12 @@ enum class IslandDisplayStyle(
 ) {
     SPOTIFY_YOUTUBE(
         id = "SPOTIFY_YOUTUBE",
-        title = "Kiểu YouTube / Spotify (Giống ảnh mẫu)",
-        subtitle = "Bìa đĩa tròn xoay bên trái camera + Sóng âm 5 cột nhịp nhàng bên phải"
+        title = "Kiểu YouTube / Spotify",
+        subtitle = "Đĩa nhạc xoay bên trái + Đồng hồ đếm ngược + Sóng âm 5 cột bên phải"
     ),
     NEON_CYBER(
         id = "NEON_CYBER",
-        title = "Kiểu Đồng Hồ Neon Đếm Ngược",
+        title = "Kiểu Đồng Hồ Neon",
         subtitle = "Biểu tượng mặt trăng + Số đếm ngược trực tiếp + Viền Neon đổi màu"
     ),
     LIQUID_WAVE(
@@ -54,8 +58,8 @@ enum class IslandDisplayStyle(
     ),
     MINIMAL_IOS(
         id = "MINIMAL_IOS",
-        title = "Kiểu iOS Dynamic Island Tối Giản",
-        subtitle = "Viên thuốc đen tuyền ôm sát camera, viền mảnh tinh tế"
+        title = "Kiểu iOS Tối Giản",
+        subtitle = "Viên thuốc đen tuyền ôm sát camera, hiển thị rõ số phút còn lại"
     );
 
     companion object {
@@ -65,9 +69,20 @@ enum class IslandDisplayStyle(
     }
 }
 
+enum class IslandSizeMode {
+    MINIMIZED, // Thu nhỏ siêu gọn ở góc/mép để không ảnh hưởng trải nghiệm dùng điện thoại
+    COMPACT,   // Viên thuốc chuẩn quanh camera trước
+    EXPANDED   // Bảng điều khiển mở rộng đầy đủ nút bấm
+}
+
 /**
  * Quản lý hiển thị Dynamic Island NỔI TOÀN HỆ THỐNG (ngoài màn hình chính & đè lên thanh trạng thái
- * của mọi ứng dụng khác giống hệt YouTube / Spotify trong ảnh).
+ * của mọi ứng dụng khác giống YouTube / Spotify).
+ *
+ * Hỗ trợ:
+ * - Hiển thị rõ thời gian còn lại (MM:SS) ở cả 4 kiểu giao diện và khi thu nhỏ.
+ * - Mở nhanh lại App 1 chạm / chạm đúp từ bất kỳ màn hình nào (vượt rào cản Background Activity Launch).
+ * - Thu nhỏ gọn (Minimized Mode) + Kéo thả tự do (Drag-to-move) để không bao giờ cản trở việc dùng điện thoại.
  */
 object SystemDynamicIslandManager {
 
@@ -75,8 +90,9 @@ object SystemDynamicIslandManager {
     private const val KEY_ENABLED = "always_show_waterdrop"
     private const val KEY_SHOW_OUTSIDE_APP = "show_island_outside_app"
     private const val KEY_STYLE = "island_display_style"
+    private const val KEY_OFFSET_X_DP = "island_offset_x_dp"
     private const val KEY_OFFSET_Y_DP = "island_offset_y_dp"
-    private const val KEY_WIDTH_SCALE = "island_width_scale"
+    private const val KEY_MINIMIZED = "island_is_minimized"
 
     private var windowManager: WindowManager? = null
     private var floatingView: FloatingIslandCanvasView? = null
@@ -123,6 +139,20 @@ object SystemDynamicIslandManager {
         refreshOverlay(context)
     }
 
+    fun isMinimized(context: Context): Boolean {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_MINIMIZED, false)
+    }
+
+    fun setMinimized(context: Context, minimized: Boolean) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_MINIMIZED, minimized)
+            .apply()
+        floatingView?.setSizeMode(if (minimized) IslandSizeMode.MINIMIZED else IslandSizeMode.COMPACT)
+        refreshOverlay(context)
+    }
+
     fun getStyle(context: Context): IslandDisplayStyle {
         val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getString(KEY_STYLE, IslandDisplayStyle.SPOTIFY_YOUTUBE.id)
@@ -138,18 +168,62 @@ object SystemDynamicIslandManager {
         refreshOverlay(context)
     }
 
+    fun getOffsetXDp(context: Context): Int {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getInt(KEY_OFFSET_X_DP, 0)
+    }
+
+    fun setOffsetXDp(context: Context, offsetXDp: Int) {
+        val clamped = offsetXDp.coerceIn(-160, 160)
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_OFFSET_X_DP, clamped)
+            .apply()
+        updateWindowPosition(context)
+    }
+
     fun getOffsetYDp(context: Context): Int {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getInt(KEY_OFFSET_Y_DP, 4)
     }
 
     fun setOffsetYDp(context: Context, offsetDp: Int) {
-        val clamped = offsetDp.coerceIn(-10, 40)
+        val clamped = offsetDp.coerceIn(-10, 260)
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_OFFSET_Y_DP, clamped)
             .apply()
         updateWindowPosition(context)
+    }
+
+    fun resetPositionAndSize(context: Context) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_OFFSET_X_DP, 0)
+            .putInt(KEY_OFFSET_Y_DP, 4)
+            .putBoolean(KEY_MINIMIZED, false)
+            .apply()
+        floatingView?.setSizeMode(IslandSizeMode.COMPACT)
+        refreshOverlay(context)
+    }
+
+    internal fun onDragDeltaPx(context: Context, dxPx: Float, dyPx: Float) {
+        val params = layoutParams ?: return
+        val wm = windowManager ?: return
+        val view = floatingView ?: return
+        val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+        val newX = (params.x + dxPx.roundToInt()).coerceIn(dpToPx(context, -155f), dpToPx(context, 155f))
+        val newY = (params.y + dyPx.roundToInt()).coerceIn(dpToPx(context, -8f), dpToPx(context, 300f))
+        if (newX != params.x || newY != params.y) {
+            params.x = newX
+            params.y = newY
+            runCatching { wm.updateViewLayout(view, params) }
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_OFFSET_X_DP, (newX / density).roundToInt())
+                .putInt(KEY_OFFSET_Y_DP, (newY / density).roundToInt())
+                .apply()
+        }
     }
 
     fun refreshOverlay(context: Context, state: TimerState = TimerForegroundService.timerFlow.value) {
@@ -173,16 +247,35 @@ object SystemDynamicIslandManager {
 
         val style = getStyle(context)
         val view = floatingView ?: FloatingIslandCanvasView(context).also {
+            val savedMin = isMinimized(context)
+            it.setSizeMode(if (savedMin) IslandSizeMode.MINIMIZED else IslandSizeMode.COMPACT)
             floatingView = it
         }
         view.setDisplayStyle(style)
         view.updateTimerState(state)
 
-        val isExpanded = view.isExpandedState
-        val widthDp = if (isExpanded) 340f else 176f
-        val heightDp = if (isExpanded) 172f else 36f
+        val mode = view.sizeMode
+        val widthDp = when (mode) {
+            IslandSizeMode.MINIMIZED -> 88f
+            IslandSizeMode.COMPACT -> 228f
+            IslandSizeMode.EXPANDED -> 344f
+        }
+        val heightDp = when (mode) {
+            IslandSizeMode.MINIMIZED -> 28f
+            IslandSizeMode.COMPACT -> 36f
+            IslandSizeMode.EXPANDED -> 192f
+        }
         val widthPx = dpToPx(context, widthDp)
         val heightPx = dpToPx(context, heightDp)
+
+        val savedXDp = getOffsetXDp(context)
+        // Khi ở chế độ Thu nhỏ (MINIMIZED) mà người dùng chưa kéo sang ngang, tự động xếp gọn sang góc phải để không che camera!
+        val effectiveXDp = when (mode) {
+            IslandSizeMode.EXPANDED -> 0
+            IslandSizeMode.MINIMIZED -> if (savedXDp == 0) 115 else savedXDp
+            IslandSizeMode.COMPACT -> savedXDp
+        }
+        val xPx = dpToPx(context, effectiveXDp.toFloat())
         val yPx = dpToPx(context, getOffsetYDp(context).toFloat())
 
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -204,7 +297,7 @@ object SystemDynamicIslandManager {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                x = 0
+                x = xPx
                 y = yPx
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     layoutInDisplayCutoutMode =
@@ -218,9 +311,10 @@ object SystemDynamicIslandManager {
             }
         } else {
             layoutParams?.let { params ->
-                if (params.width != widthPx || params.height != heightPx || params.y != yPx) {
+                if (params.width != widthPx || params.height != heightPx || params.x != xPx || params.y != yPx) {
                     params.width = widthPx
                     params.height = heightPx
+                    params.x = xPx
                     params.y = yPx
                     runCatching { wm.updateViewLayout(view, params) }
                 }
@@ -228,13 +322,91 @@ object SystemDynamicIslandManager {
         }
     }
 
-    internal fun onExpandedChanged(context: Context) {
-        showOrUpdateOverlay(context.applicationContext, TimerForegroundService.timerFlow.value)
+    internal fun onSizeModeChanged(context: Context, newMode: IslandSizeMode) {
+        val appCtx = context.applicationContext
+        if (newMode != IslandSizeMode.EXPANDED) {
+            appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_MINIMIZED, newMode == IslandSizeMode.MINIMIZED)
+                .apply()
+        }
+        showOrUpdateOverlay(appCtx, TimerForegroundService.timerFlow.value)
     }
 
     private fun updateWindowPosition(context: Context) {
         if (isAdded) {
             showOrUpdateOverlay(context.applicationContext, TimerForegroundService.timerFlow.value)
+        }
+    }
+
+    /**
+     * Mở nhanh lại ứng dụng Tools Hub (màn hình PowerTimer) từ lớp phủ Dynamic Island
+     * bất kể người dùng đang ở màn hình chính hay trong ứng dụng khác.
+     */
+    fun openAppFromOverlay(context: Context, toolId: String = "power_timer") {
+        val appCtx = context.applicationContext
+        val intent = Intent(appCtx, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            putExtra("OPEN_TOOL_ID", toolId)
+        }
+
+        val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
+            runCatching {
+                ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    )
+                    .toBundle()
+            }.getOrNull()
+        } else null
+
+        // Bước 1: Đưa Task hiện có của App lên tiền cảnh nếu đang nằm trong Recent Tasks
+        runCatching {
+            val am = appCtx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            am?.appTasks?.firstOrNull()?.moveToFront()
+        }
+
+        // Bước 2: Gửi qua PendingIntent với quyền Background Activity Start
+        val sentViaPendingIntent = runCatching {
+            val pi = PendingIntent.getActivity(
+                appCtx,
+                9012,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
+                pi.send(appCtx, 0, intent, null, null, null, optionsBundle)
+            } else {
+                pi.send()
+            }
+            true
+        }.getOrDefault(false)
+
+        // Bước 3: Fallback gọi trực tiếp startActivity
+        if (!sentViaPendingIntent) {
+            runCatching {
+                if (optionsBundle != null) {
+                    appCtx.startActivity(intent, optionsBundle)
+                } else {
+                    appCtx.startActivity(intent)
+                }
+            }
+        } else {
+            // Vẫn gọi startActivity để đảm bảo onNewIntent nhận được OPEN_TOOL_ID ngay lập tức
+            runCatching {
+                if (optionsBundle != null) {
+                    appCtx.startActivity(intent, optionsBundle)
+                } else {
+                    appCtx.startActivity(intent)
+                }
+            }
         }
     }
 
@@ -261,11 +433,12 @@ object SystemDynamicIslandManager {
 
 /**
  * Custom View vẽ trực tiếp viên thuốc Dynamic Island ngoài màn hình chính ở tốc độ 60fps.
- * Hỗ trợ 4 kiểu hiển thị (YouTube/Spotify, Đồng hồ Neon, Sóng Nước, Tối giản iOS) và Chạm để mở rộng.
+ * Hỗ trợ 3 chế độ kích thước (MINIMIZED, COMPACT, EXPANDED), kéo thả tự do,
+ * hiển thị rõ thời gian còn lại và mở nhanh lại App.
  */
 internal class FloatingIslandCanvasView(context: Context) : View(context) {
 
-    var isExpandedState: Boolean = false
+    var sizeMode: IslandSizeMode = IslandSizeMode.COMPACT
         private set
 
     private var style: IslandDisplayStyle = IslandDisplayStyle.SPOTIFY_YOUTUBE
@@ -273,7 +446,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     private var phase: Float = 0f
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#05060A")
+        color = Color.parseColor("#05070E")
         style = Paint.Style.FILL
     }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -293,7 +466,13 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     private val btnBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+
     private val pillRect = RectF()
+    private val compactMinimizeHitRect = RectF()
+    private val topOpenAppRect = RectF()
+    private val topMinimizeRect = RectF()
+    private val topCollapseRect = RectF()
+    private val clockBodyRect = RectF()
     private val btn1Rect = RectF()
     private val btn2Rect = RectF()
     private val btn3Rect = RectF()
@@ -311,6 +490,11 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
 
     init {
         animator.start()
+    }
+
+    fun setSizeMode(newMode: IslandSizeMode) {
+        sizeMode = newMode
+        invalidate()
     }
 
     fun setDisplayStyle(newStyle: IslandDisplayStyle) {
@@ -336,23 +520,44 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
         )
     }
 
+    private fun currentFormattedTime(): String {
+        val raw = timerState.formattedRemaining
+        return if (raw.isNotBlank() && raw != "00:00") raw else "30:00"
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
-        val pad = dp(2f)
+        val pad = dp(1.5f)
         pillRect.set(pad, pad, w - pad, h - pad)
-        val corner = if (isExpandedState) dp(26f) else h / 2f
+        val corner = when (sizeMode) {
+            IslandSizeMode.EXPANDED -> dp(26f)
+            else -> h / 2f
+        }
 
-        // Nền đen tuyền của viên thuốc
+        // Nền viên thuốc (bán trong suốt nhẹ khi ở chế độ Thu nhỏ MINIMIZED để không che nội dung)
+        bgPaint.color = if (sizeMode == IslandSizeMode.MINIMIZED) {
+            Color.parseColor("#D905070E")
+        } else {
+            Color.parseColor("#05070E")
+        }
         canvas.drawRoundRect(pillRect, corner, corner, bgPaint)
 
         // Viền tùy theo kiểu hiển thị
-        borderPaint.strokeWidth = dp(if (isExpandedState) 1.6f else 1.2f)
+        borderPaint.strokeWidth = dp(if (sizeMode == IslandSizeMode.EXPANDED) 1.6f else 1.2f)
         when (style) {
             IslandDisplayStyle.SPOTIFY_YOUTUBE -> {
-                borderPaint.shader = null
-                borderPaint.color = Color.parseColor("#2A324B")
+                borderPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(
+                        Color.parseColor("#22C55E"),
+                        Color.parseColor("#2A324B"),
+                        Color.parseColor("#06B6D4")
+                    ),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
             }
             IslandDisplayStyle.NEON_CYBER -> {
                 borderPaint.shader = LinearGradient(
@@ -380,27 +585,62 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
             }
             IslandDisplayStyle.MINIMAL_IOS -> {
                 borderPaint.shader = null
-                borderPaint.color = Color.parseColor("#1E293B")
+                borderPaint.color = Color.parseColor("#334155")
             }
         }
         canvas.drawRoundRect(pillRect, corner, corner, borderPaint)
 
-        if (!isExpandedState) {
-            drawCompactIsland(canvas, w, h)
-        } else {
-            drawExpandedIsland(canvas, w, h)
+        when (sizeMode) {
+            IslandSizeMode.MINIMIZED -> drawMinimizedIsland(canvas, w, h)
+            IslandSizeMode.COMPACT -> drawCompactIsland(canvas, w, h)
+            IslandSizeMode.EXPANDED -> drawExpandedIsland(canvas, w, h)
         }
     }
 
+    /**
+     * Chế độ Thu Nhỏ Siêu Gọn (88x28dp):
+     * Không chiếm diện tích thanh trạng thái, vẫn hiển thị rõ thời gian còn lại (MM:SS).
+     */
+    private fun drawMinimizedIsland(canvas: Canvas, w: Float, h: Float) {
+        val cy = h / 2f
+        val timeStr = currentFormattedTime()
+
+        // Chấm tròn trạng thái nhấp nháy bên trái
+        barPaint.shader = null
+        barPaint.color = if (timerState.isRunning) {
+            Color.parseColor("#22C55E")
+        } else {
+            Color.parseColor("#38BDF8")
+        }
+        val pulseR = dp(3.8f) + sin(phase).toFloat() * dp(0.7f)
+        canvas.drawCircle(dp(12f), cy, pulseR, barPaint)
+
+        // Thời gian còn lại rõ nét ở giữa
+        textPaint.textSize = dp(11.5f)
+        textPaint.color = if (timerState.isRunning) Color.parseColor("#4ADE80") else Color.WHITE
+        textPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText(timeStr.take(5), w / 2f + dp(3f), cy + dp(4f), textPaint)
+    }
+
+    /**
+     * Chế độ Viên Thuốc Chuẩn (228x36dp):
+     * - Bên trái Camera: Đĩa xoay / Biểu tượng + Thời gian đếm ngược MM:SS RÕ NÉT.
+     * - Chính giữa (92..136dp): Chừa khoảng trống cho Camera trước để không bao giờ che chữ.
+     * - Bên phải Camera: Sóng nhạc động + Nút thu nhỏ nhanh (–).
+     */
     private fun drawCompactIsland(canvas: Canvas, w: Float, h: Float) {
         val cy = h / 2f
-        val timeStr = if (timerState.isRunning) timerState.formattedRemaining else "30:00"
+        val timeStr = currentFormattedTime().take(5)
+        val timeColor = if (timerState.isRunning) Color.parseColor("#4ADE80") else Color.parseColor("#38BDF8")
+
+        // Vùng chạm góc phải cùng (30dp cuối) để Thu nhỏ nhanh 1 chạm
+        compactMinimizeHitRect.set(w - dp(30f), 0f, w, h)
 
         when (style) {
             IslandDisplayStyle.SPOTIFY_YOUTUBE -> {
-                // Giống hệt ảnh mẫu: Vòng tròn đĩa nhạc xanh/tím bên trái + Khoảng camera giữa + 5 cột sóng âm trắng bên phải
-                val discCenterX = dp(20f)
-                val discRadius = dp(11.5f)
+                // Bên trái camera: Đĩa nhạc xoay + Số phút đếm ngược rõ nét
+                val discCenterX = dp(18f)
+                val discRadius = dp(10.5f)
                 barPaint.shader = LinearGradient(
                     discCenterX - discRadius, cy - discRadius,
                     discCenterX + discRadius, cy + discRadius,
@@ -411,32 +651,29 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                 canvas.drawCircle(discCenterX, cy, discRadius, barPaint)
                 barPaint.shader = null
 
-                // Chấm xoay trên đĩa
                 val dotAngle = phase
-                val dotX = discCenterX + cos(dotAngle) * dp(5.5f)
-                val dotY = cy + sin(dotAngle) * dp(5.5f)
+                val dotX = discCenterX + cos(dotAngle) * dp(5f)
+                val dotY = cy + sin(dotAngle) * dp(5f)
                 barPaint.color = Color.WHITE
-                canvas.drawCircle(dotX, dotY, dp(2.2f), barPaint)
-                barPaint.color = Color.parseColor("#05060A")
-                canvas.drawCircle(discCenterX, cy, dp(3.2f), barPaint)
+                canvas.drawCircle(dotX, dotY, dp(2f), barPaint)
+                barPaint.color = Color.parseColor("#05070E")
+                canvas.drawCircle(discCenterX, cy, dp(2.8f), barPaint)
 
-                // Nếu đang đếm ngược thì hiện số phút nhỏ gọn cạnh đĩa
-                if (timerState.isRunning) {
-                    textPaint.textSize = dp(9.5f)
-                    textPaint.color = Color.parseColor("#4ADE80")
-                    textPaint.textAlign = Paint.Align.LEFT
-                    canvas.drawText(timeStr.take(5), dp(35f), cy + dp(3.5f), textPaint)
-                }
+                // Đồng hồ đếm ngược (MM:SS) nằm bên trái camera (32dp..78dp, không chạm camera giữa 114dp!)
+                textPaint.textSize = dp(11.5f)
+                textPaint.color = timeColor
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(timeStr, dp(33f), cy + dp(4f), textPaint)
 
-                // Bên phải camera: 5 cột sóng nhạc trắng (như ảnh chụp màn hình của người dùng!)
+                // Bên phải camera: 5 cột sóng nhạc trắng + nút thu nhỏ (–)
                 val barCount = 5
-                val barW = dp(2.4f)
-                val gap = dp(2.4f)
-                val startX = w - dp(14f) - (barCount * barW + (barCount - 1) * gap)
+                val barW = dp(2.3f)
+                val gap = dp(2.2f)
+                val startX = w - dp(32f) - (barCount * barW + (barCount - 1) * gap)
                 barPaint.color = Color.WHITE
                 for (i in 0 until barCount) {
                     val ratio = 0.25f + 0.75f * ((sin(phase * 1.4f + i * 1.05f) + 1f) / 2f)
-                    val barH = dp(14f) * ratio
+                    val barH = dp(13.5f) * ratio
                     val left = startX + i * (barW + gap)
                     canvas.drawRoundRect(
                         left,
@@ -451,16 +688,15 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
             }
 
             IslandDisplayStyle.NEON_CYBER -> {
-                // Bên trái: Chấm mặt trăng xanh + Thời gian; Bên phải: Sóng âm màu Neon
                 barPaint.color = Color.parseColor("#00E5FF")
                 canvas.drawCircle(dp(16f), cy, dp(6f), barPaint)
-                barPaint.color = Color.parseColor("#05060A")
+                barPaint.color = Color.parseColor("#05070E")
                 canvas.drawCircle(dp(18.5f), cy - dp(1.5f), dp(5f), barPaint)
 
-                textPaint.textSize = dp(11f)
+                textPaint.textSize = dp(11.5f)
                 textPaint.color = Color.WHITE
                 textPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText(timeStr, dp(26f), cy + dp(4f), textPaint)
+                canvas.drawText(timeStr, dp(28f), cy + dp(4f), textPaint)
 
                 val colors = intArrayOf(
                     Color.parseColor("#22C55E"),
@@ -468,69 +704,132 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                     Color.parseColor("#A855F7"),
                     Color.parseColor("#EC4899")
                 )
-                val barW = dp(2.6f)
-                val gap = dp(2.4f)
-                val startX = w - dp(14f) - (4 * barW + 3 * gap)
+                val barW = dp(2.5f)
+                val gap = dp(2.3f)
+                val startX = w - dp(32f) - (4 * barW + 3 * gap)
                 for (i in 0 until 4) {
                     barPaint.color = colors[i]
                     val ratio = 0.3f + 0.7f * ((sin(phase + i * 1.1f) + 1f) / 2f)
-                    val barH = dp(14f) * ratio
+                    val barH = dp(13.5f) * ratio
                     val left = startX + i * (barW + gap)
                     canvas.drawRoundRect(left, cy - barH / 2f, left + barW, cy + barH / 2f, barW / 2f, barW / 2f, barPaint)
                 }
             }
 
             IslandDisplayStyle.LIQUID_WAVE -> {
-                // Vẽ sóng nước dưới đáy + Thời gian bên phải
                 val path = Path()
-                path.moveTo(dp(10f), cy + dp(4f))
-                var x = dp(10f)
-                while (x <= w - dp(10f)) {
-                    val y = cy + sin((x / w) * 4f * Math.PI + phase).toFloat() * dp(4f)
+                path.moveTo(dp(12f), cy + dp(5f))
+                var x = dp(12f)
+                while (x <= w - dp(30f)) {
+                    val y = cy + dp(3f) + sin((x / w) * 4f * Math.PI + phase).toFloat() * dp(3.5f)
                     path.lineTo(x, y)
                     x += dp(6f)
                 }
-                borderPaint.strokeWidth = dp(2f)
+                borderPaint.strokeWidth = dp(1.8f)
                 canvas.drawPath(path, borderPaint)
 
-                textPaint.textSize = dp(11f)
-                textPaint.color = Color.parseColor("#38BDF8")
-                textPaint.textAlign = Paint.Align.RIGHT
-                canvas.drawText(timeStr, w - dp(14f), cy + dp(4f), textPaint)
+                textPaint.textSize = dp(11.5f)
+                textPaint.color = timeColor
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(timeStr, dp(16f), cy + dp(3.5f), textPaint)
             }
 
             IslandDisplayStyle.MINIMAL_IOS -> {
                 barPaint.color = if (timerState.isRunning) Color.parseColor("#22C55E") else Color.parseColor("#F59E0B")
                 canvas.drawCircle(dp(16f), cy, dp(4.5f), barPaint)
 
-                textPaint.textSize = dp(11f)
+                textPaint.textSize = dp(11.5f)
                 textPaint.color = Color.WHITE
-                textPaint.textAlign = Paint.Align.RIGHT
-                canvas.drawText(timeStr, w - dp(14f), cy + dp(4f), textPaint)
+                textPaint.textAlign = Paint.Align.LEFT
+                canvas.drawText(timeStr, dp(26f), cy + dp(4f), textPaint)
             }
         }
+
+        // Vẽ nút thu nhỏ nhanh (–) ở góc phải của viên thuốc COMPACT
+        btnBgPaint.color = Color.parseColor("#1E293B")
+        val minCx = w - dp(15f)
+        canvas.drawCircle(minCx, cy, dp(8.5f), btnBgPaint)
+        subTextPaint.color = Color.parseColor("#94A3B8")
+        subTextPaint.textSize = dp(11f)
+        subTextPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("–", minCx, cy + dp(3.5f), subTextPaint)
     }
 
+    /**
+     * Bảng điều khiển mở rộng (344x192dp):
+     * - Hàng đầu: Tiêu đề + Nút [Mở App] + Nút [Thu nhỏ] + Nút [▲]
+     * - Khung giữa: Đồng hồ lớn (MM:SS) + Phần trăm thời gian còn lại + Sóng âm (Chạm vào mở thẳng App!)
+     * - Thanh tiến trình
+     * - Hàng 4 nút điều khiển nhanh dưới đáy
+     */
     private fun drawExpandedIsland(canvas: Canvas, w: Float, h: Float) {
-        val timeStr = if (timerState.isRunning) timerState.formattedRemaining else "30:00"
+        val timeStr = currentFormattedTime()
         val statusLabel = if (timerState.isRunning) {
-            "Đang hẹn giờ • ${timerState.selectedMode.title}"
+            "Đang đếm ngược • Chạm đồng hồ để mở App"
         } else {
-            "Dynamic Island • Chạm mốc bên dưới để bật"
+            "Sẵn sàng • Chạm mốc bên dưới hoặc Mở App"
         }
 
-        // Tiêu đề + Thời gian lớn
+        // Hàng trên cùng: Nút [Mở App] + Nút [Thu nhỏ] + Nút [▲]
+        subTextPaint.textSize = dp(10.5f)
+        subTextPaint.color = Color.parseColor("#38BDF8")
+        subTextPaint.textAlign = Paint.Align.LEFT
+        canvas.drawText(statusLabel, dp(16f), dp(26f), subTextPaint)
+
+        // Nút [Thu nhỏ] ở góc trên phải
+        val collapseRight = w - dp(14f)
+        val collapseLeft = collapseRight - dp(28f)
+        topCollapseRect.set(collapseLeft, dp(10f), collapseRight, dp(34f))
+        btnBgPaint.color = Color.parseColor("#1E293B")
+        canvas.drawRoundRect(topCollapseRect, dp(8f), dp(8f), btnBgPaint)
+        subTextPaint.color = Color.WHITE
+        subTextPaint.textSize = dp(10f)
+        subTextPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("▲", topCollapseRect.centerX(), topCollapseRect.centerY() + dp(3.5f), subTextPaint)
+
+        val minRight = collapseLeft - dp(6f)
+        val minLeft = minRight - dp(62f)
+        topMinimizeRect.set(minLeft, dp(10f), minRight, dp(34f))
+        btnBgPaint.color = Color.parseColor("#334155")
+        canvas.drawRoundRect(topMinimizeRect, dp(8f), dp(8f), btnBgPaint)
+        subTextPaint.color = Color.parseColor("#FACC15")
+        subTextPaint.textSize = dp(10f)
+        canvas.drawText("🗕 Thu nhỏ", topMinimizeRect.centerX(), topMinimizeRect.centerY() + dp(3.5f), subTextPaint)
+
+        // Khung đồng hồ lớn (chạm vào đây sẽ mở thẳng vào lại App!)
+        clockBodyRect.set(dp(16f), dp(40f), w - dp(16f), dp(96f))
+        btnBgPaint.color = Color.parseColor("#0D1326")
+        canvas.drawRoundRect(clockBodyRect, dp(14f), dp(14f), btnBgPaint)
+
+        textPaint.textSize = dp(26f)
+        textPaint.color = if (timerState.isRunning) Color.parseColor("#4ADE80") else Color.WHITE
+        textPaint.textAlign = Paint.Align.LEFT
+        canvas.drawText(timeStr, dp(28f), dp(75f), textPaint)
+
+        val pct = if (timerState.isRunning) {
+            (timerState.progress * 100).toInt().coerceIn(0, 100)
+        } else 100
         subTextPaint.textSize = dp(11f)
         subTextPaint.color = Color.parseColor("#38BDF8")
         subTextPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText(statusLabel, dp(18f), dp(34f), subTextPaint)
+        val remMins = (timerState.remainingSeconds / 60L).coerceAtLeast(0L)
+        val detailTime = if (timerState.isRunning) {
+            "Còn $remMins phút ($pct%)"
+        } else {
+            "Mức hẹn: $remMins phút"
+        }
+        canvas.drawText(detailTime, dp(138f), dp(64f), subTextPaint)
 
-        textPaint.textSize = dp(26f)
-        textPaint.color = Color.WHITE
-        textPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText(timeStr, dp(18f), dp(68f), textPaint)
+        // Nút [🚀 Mở App] nằm ngay trong khung đồng hồ để bấm cực nhạy
+        topOpenAppRect.set(dp(138f), dp(70f), dp(228f), dp(91f))
+        btnBgPaint.color = Color.parseColor("#0284C7")
+        canvas.drawRoundRect(topOpenAppRect, dp(7f), dp(7f), btnBgPaint)
+        subTextPaint.color = Color.WHITE
+        subTextPaint.textSize = dp(10.5f)
+        subTextPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText("🚀 Mở App ngay", topOpenAppRect.centerX(), topOpenAppRect.centerY() + dp(3.5f), subTextPaint)
 
-        // Sóng nhạc bên phải
+        // Sóng nhạc 5 cột bên phải khung đồng hồ
         val colors = intArrayOf(
             Color.parseColor("#22C55E"),
             Color.parseColor("#00E5FF"),
@@ -538,14 +837,14 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
             Color.parseColor("#EC4899"),
             Color.parseColor("#FACC15")
         )
-        val barW = dp(4f)
-        val gap = dp(3.5f)
-        val startX = w - dp(22f) - (5 * barW + 4 * gap)
-        val waveCy = dp(52f)
+        val barW = dp(3.8f)
+        val gap = dp(3.2f)
+        val startX = w - dp(28f) - (5 * barW + 4 * gap)
+        val waveCy = dp(68f)
         for (i in 0 until 5) {
             barPaint.color = colors[i]
             val ratio = 0.25f + 0.75f * ((sin(phase * 1.3f + i * 0.9f) + 1f) / 2f)
-            val barH = dp(28f) * ratio
+            val barH = dp(26f) * ratio
             val left = startX + i * (barW + gap)
             canvas.drawRoundRect(
                 left,
@@ -559,43 +858,43 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
         }
 
         // Thanh tiến trình
-        val barTop = dp(82f)
-        val barBottom = dp(87f)
+        val barTop = dp(104f)
+        val barBottom = dp(109f)
         btnBgPaint.color = Color.parseColor("#1E293B")
-        canvas.drawRoundRect(dp(18f), barTop, w - dp(18f), barBottom, dp(4f), dp(4f), btnBgPaint)
+        canvas.drawRoundRect(dp(16f), barTop, w - dp(16f), barBottom, dp(4f), dp(4f), btnBgPaint)
         val progress = if (timerState.isRunning) timerState.progress.coerceIn(0.03f, 1f) else 1f
         btnBgPaint.color = Color.parseColor("#00E5FF")
         canvas.drawRoundRect(
-            dp(18f),
+            dp(16f),
             barTop,
-            dp(18f) + (w - dp(36f)) * progress,
+            dp(16f) + (w - dp(32f)) * progress,
             barBottom,
             dp(4f),
             dp(4f),
             btnBgPaint
         )
 
-        // 4 Nút bấm tương tác ngay ngoài màn hình chính
-        val btnTop = dp(102f)
-        val btnBottom = h - dp(16f)
-        val totalPad = dp(36f)
-        val spacing = dp(8f)
+        // 4 Nút bấm tương tác dưới đáy
+        val btnTop = dp(120f)
+        val btnBottom = h - dp(14f)
+        val totalPad = dp(32f)
+        val spacing = dp(7f)
         val btnW = (w - totalPad - spacing * 3) / 4f
 
         val labels = if (timerState.isRunning) {
-            listOf("+10 Phút", "Khóa ngay", "Mở App", "Dừng")
+            listOf("+10 Phút", "Tắt màn", "Mở App", "Dừng")
         } else {
             listOf("Bật 15p", "Bật 30p", "Bật 60p", "Mở App")
         }
         val bgColors = if (timerState.isRunning) {
-            listOf("#0284C7", "#D97706", "#334155", "#DC2626")
+            listOf("#0284C7", "#D97706", "#2563EB", "#DC2626")
         } else {
-            listOf("#0F766E", "#0284C7", "#6D28D9", "#334155")
+            listOf("#0F766E", "#0284C7", "#6D28D9", "#2563EB")
         }
 
         val rects = listOf(btn1Rect, btn2Rect, btn3Rect, btn4Rect)
         for (i in 0 until 4) {
-            val left = dp(18f) + i * (btnW + spacing)
+            val left = dp(16f) + i * (btnW + spacing)
             val rect = rects[i]
             rect.set(left, btnTop, left + btnW, btnBottom)
             btnBgPaint.color = Color.parseColor(bgColors[i])
@@ -608,23 +907,50 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
         }
     }
 
-    private var downX = 0f
-    private var downY = 0f
+    private var downRawX = 0f
+    private var downRawY = 0f
+    private var lastRawX = 0f
+    private var lastRawY = 0f
+    private var isDragging = false
+    private var lastTapTimeMs = 0L
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
+                downRawX = event.rawX
+                downRawY = event.rawY
+                lastRawX = event.rawX
+                lastRawY = event.rawY
+                isDragging = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val totalDx = abs(event.rawX - downRawX)
+                val totalDy = abs(event.rawY - downRawY)
+                if (sizeMode != IslandSizeMode.EXPANDED && (totalDx > dp(10f) || totalDy > dp(10f))) {
+                    isDragging = true
+                    val stepDx = event.rawX - lastRawX
+                    val stepDy = event.rawY - lastRawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+                    SystemDynamicIslandManager.onDragDeltaPx(context, stepDx, stepDy)
+                }
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                val dx = abs(event.x - downX)
-                val dy = abs(event.y - downY)
-                if (dx < dp(18f) && dy < dp(18f)) {
-                    handleTap(event.x, event.y)
+                if (!isDragging) {
+                    val now = System.currentTimeMillis()
+                    if (sizeMode != IslandSizeMode.EXPANDED && (now - lastTapTimeMs) < 320L) {
+                        // Chạm đúp (Double-tap) vào viên thuốc: Mở thẳng vào lại App ngay lập tức!
+                        lastTapTimeMs = 0L
+                        SystemDynamicIslandManager.openAppFromOverlay(context)
+                    } else {
+                        lastTapTimeMs = now
+                        handleTap(event.x, event.y)
+                    }
                 }
+                isDragging = false
                 return true
             }
         }
@@ -632,70 +958,89 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
     }
 
     private fun handleTap(x: Float, y: Float) {
-        if (!isExpandedState) {
-            isExpandedState = true
-            SystemDynamicIslandManager.onExpandedChanged(context)
-            return
-        }
-
         val appCtx = context.applicationContext
-        val running = timerState.isRunning
 
-        when {
-            btn1Rect.contains(x, y) -> {
-                if (running) {
-                    TimerForegroundService.addTenMinutes(appCtx)
-                } else {
-                    TimerForegroundService.startTimer(appCtx, 15 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
-                }
-                collapse()
+        when (sizeMode) {
+            IslandSizeMode.MINIMIZED -> {
+                // Đang ở chế độ Thu nhỏ -> chạm 1 lần bung ra lại viên thuốc chuẩn
+                sizeMode = IslandSizeMode.COMPACT
+                SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                return
             }
-            btn2Rect.contains(x, y) -> {
-                if (running) {
-                    val mode = timerState.selectedMode
-                    TimerForegroundService.stopTimer(appCtx)
-                    collapse()
-                    CoroutineScope(Dispatchers.Main).launch {
-                        ShutdownManager(appCtx).executeShutdown(mode, fadeAudio = false, enableDnd = false)
+            IslandSizeMode.COMPACT -> {
+                // Nếu bấm vào nút (–) ở góc phải viên thuốc -> Thu nhỏ ngay lập tức!
+                if (compactMinimizeHitRect.contains(x, y)) {
+                    sizeMode = IslandSizeMode.MINIMIZED
+                    SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                } else {
+                    sizeMode = IslandSizeMode.EXPANDED
+                    SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
+                }
+                return
+            }
+            IslandSizeMode.EXPANDED -> {
+                val running = timerState.isRunning
+                when {
+                    topMinimizeRect.contains(x, y) -> {
+                        sizeMode = IslandSizeMode.MINIMIZED
+                        SystemDynamicIslandManager.onSizeModeChanged(appCtx, sizeMode)
                     }
-                } else {
-                    TimerForegroundService.startTimer(appCtx, 30 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
-                    collapse()
+                    topCollapseRect.contains(x, y) -> {
+                        collapseToCompact()
+                    }
+                    topOpenAppRect.contains(x, y) || clockBodyRect.contains(x, y) -> {
+                        collapseToCompact()
+                        SystemDynamicIslandManager.openAppFromOverlay(appCtx)
+                    }
+                    btn1Rect.contains(x, y) -> {
+                        if (running) {
+                            TimerForegroundService.addTenMinutes(appCtx)
+                        } else {
+                            TimerForegroundService.startTimer(appCtx, 15 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
+                        }
+                        collapseToCompact()
+                    }
+                    btn2Rect.contains(x, y) -> {
+                        if (running) {
+                            val mode = timerState.selectedMode
+                            TimerForegroundService.stopTimer(appCtx)
+                            collapseToCompact()
+                            CoroutineScope(Dispatchers.Main).launch {
+                                ShutdownManager(appCtx).executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                            }
+                        } else {
+                            TimerForegroundService.startTimer(appCtx, 30 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
+                            collapseToCompact()
+                        }
+                    }
+                    btn3Rect.contains(x, y) -> {
+                        if (running) {
+                            collapseToCompact()
+                            SystemDynamicIslandManager.openAppFromOverlay(appCtx)
+                        } else {
+                            TimerForegroundService.startTimer(appCtx, 60 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
+                            collapseToCompact()
+                        }
+                    }
+                    btn4Rect.contains(x, y) -> {
+                        if (running) {
+                            TimerForegroundService.stopTimer(appCtx)
+                            collapseToCompact()
+                        } else {
+                            collapseToCompact()
+                            SystemDynamicIslandManager.openAppFromOverlay(appCtx)
+                        }
+                    }
+                    else -> {
+                        collapseToCompact()
+                    }
                 }
-            }
-            btn3Rect.contains(x, y) -> {
-                if (running) {
-                    openMainActivity(appCtx)
-                } else {
-                    TimerForegroundService.startTimer(appCtx, 60 * 60L, ShutdownMode.BANK_SAFE_SLEEP)
-                }
-                collapse()
-            }
-            btn4Rect.contains(x, y) -> {
-                if (running) {
-                    TimerForegroundService.stopTimer(appCtx)
-                } else {
-                    openMainActivity(appCtx)
-                }
-                collapse()
-            }
-            else -> {
-                collapse()
             }
         }
     }
 
-    private fun collapse() {
-        isExpandedState = false
-        SystemDynamicIslandManager.onExpandedChanged(context)
-    }
-
-    private fun openMainActivity(ctx: Context) {
-        val intent = Intent(ctx, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra("OPEN_TOOL_ID", "power_timer")
-        }
-        runCatching { ctx.startActivity(intent) }
+    private fun collapseToCompact() {
+        sizeMode = IslandSizeMode.COMPACT
+        SystemDynamicIslandManager.onSizeModeChanged(context, sizeMode)
     }
 }
-

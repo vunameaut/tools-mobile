@@ -410,19 +410,19 @@ fun VideoDownloaderTool(
                         }
 
                         // Story Account Quick Bar (FB & IG Stories)
-                        Row(
+                        FlowRow(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(DarkSurfaceVariant.copy(alpha = 0.65f))
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.padding(vertical = 2.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Key,
@@ -435,21 +435,23 @@ fun VideoDownloaderTool(
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         color = TextPrimary,
                                         fontWeight = FontWeight.Bold
-                                    )
-                                )
-                                StoryLoginChip(
-                                    label = if (fbLoggedIn) "FB Story ✓" else "Đăng nhập FB",
-                                    isLoggedIn = fbLoggedIn,
-                                    accentColor = VideoPlatform.FACEBOOK.badgeColor,
-                                    onClick = { loginDialogPlatform = VideoPlatform.FACEBOOK }
-                                )
-                                StoryLoginChip(
-                                    label = if (igLoggedIn) "IG Story ✓" else "Đăng nhập IG",
-                                    isLoggedIn = igLoggedIn,
-                                    accentColor = VideoPlatform.INSTAGRAM.badgeColor,
-                                    onClick = { loginDialogPlatform = VideoPlatform.INSTAGRAM }
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
+                            StoryLoginChip(
+                                label = if (fbLoggedIn) "FB Story ✓" else "Đăng nhập FB",
+                                isLoggedIn = fbLoggedIn,
+                                accentColor = VideoPlatform.FACEBOOK.badgeColor,
+                                onClick = { loginDialogPlatform = VideoPlatform.FACEBOOK }
+                            )
+                            StoryLoginChip(
+                                label = if (igLoggedIn) "IG Story ✓" else "Đăng nhập IG",
+                                isLoggedIn = igLoggedIn,
+                                accentColor = VideoPlatform.INSTAGRAM.badgeColor,
+                                onClick = { loginDialogPlatform = VideoPlatform.INSTAGRAM }
+                            )
                         }
                     }
                 }

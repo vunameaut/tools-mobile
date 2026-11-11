@@ -371,7 +371,10 @@ fun QrBarcodeStudioTool(
                                             text = "✅ Kết quả giải mã ($scannedFormat)",
                                             color = AccentGreen,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp
+                                            fontSize = 14.sp,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(end = 8.dp)
                                         )
                                         if (scannedText.startsWith("000201")) {
                                             Surface(
@@ -383,6 +386,8 @@ fun QrBarcodeStudioTool(
                                                     color = AccentCyan,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                                 )
                                             }
