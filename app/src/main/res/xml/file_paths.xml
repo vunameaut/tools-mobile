@@ -2,5 +2,6 @@
 <paths>
     <cache-path name="updates" path="updates/" />
     <cache-path name="videos_cache" path="videos/" />
+    <cache-path name="shared_images" path="shared_images/" />
     <external-path name="external_files" path="." />
 </paths>

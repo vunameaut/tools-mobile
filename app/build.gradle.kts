@@ -94,6 +94,10 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 
+    // QR/Barcode Studio & Quick OCR
+    implementation(libs.zxing.core)
+    implementation(libs.mlkit.text.recognition)
+
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)

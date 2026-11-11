@@ -59,11 +59,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.ui.components.CircularCountdownTimer
 import com.vunameaut.powertimer.ui.components.ModeSelectorCard
 import com.vunameaut.powertimer.ui.components.PermissionItem
 import com.vunameaut.powertimer.ui.theme.AccentCyan
+import com.vunameaut.powertimer.ui.theme.AccentGreen
 import com.vunameaut.powertimer.ui.theme.AccentPurple
 import com.vunameaut.powertimer.ui.theme.AccentRed
 import com.vunameaut.powertimer.ui.viewmodel.TimerViewModel
@@ -90,6 +93,12 @@ fun HomeScreen(
 
     var showPicker by remember { mutableStateOf(false) }
     var showStopConfirm by remember { mutableStateOf(false) }
+    val waterdropPrefs = remember {
+        context.getSharedPreferences("waterdrop_island_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var alwaysShowWaterdrop by remember {
+        mutableStateOf(waterdropPrefs.getBoolean("always_show_waterdrop", true))
+    }
 
     if (showPicker) {
         DurationPickerSheet(
@@ -292,7 +301,53 @@ fun HomeScreen(
                 }
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Thẻ bật/tắt & tương tác Màn hình Giọt nước (Waterdrop Island kiểu YouTube / Spotify)
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = AccentPurple.copy(alpha = 0.14f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "💧 Màn hình Giọt nước (YouTube / Spotify)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentCyan
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "Hiển thị viên thuốc sóng nhạc quanh camera giọt nước trên đỉnh màn hình. Chạm hoặc vuốt xuống giọt nước để mở nhanh bộ điều khiển hẹn giờ!",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                            fontSize = 11.5.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Switch(
+                        checked = alwaysShowWaterdrop,
+                        onCheckedChange = { enabled ->
+                            alwaysShowWaterdrop = enabled
+                            waterdropPrefs.edit().putBoolean("always_show_waterdrop", enabled).apply()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = AccentGreen
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Danh sách preset thời gian nhanh (khi chưa chạy)
             if (!timerState.isRunning) {

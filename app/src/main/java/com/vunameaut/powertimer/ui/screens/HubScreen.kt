@@ -86,6 +86,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.vunameaut.powertimer.BuildConfig
+import com.vunameaut.powertimer.qr.VietQrHelper
+import com.vunameaut.powertimer.service.ClipboardVideoTileService
+import com.vunameaut.powertimer.service.MyVietQrTileService
+import com.vunameaut.powertimer.service.QuickTileActions
+import com.vunameaut.powertimer.service.ScannerOcrTileService
+import com.vunameaut.powertimer.service.SleepTimerTileService
 import com.vunameaut.powertimer.tools.ToolEntry
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
@@ -142,6 +148,7 @@ fun HubScreen(
         mutableStateOf(loadOrderedTools(context, tools))
     }
     var isReorderMode by remember { mutableStateOf(false) }
+    val myVietQr = remember { VietQrHelper.loadMyVietQrProfile(context) }
 
     // Trạng thái kéo-thả trực tiếp trên lưới
     var draggingToolId by remember { mutableStateOf<String?>(null) }
@@ -204,6 +211,17 @@ fun HubScreen(
             if (hasUpdate) {
                 item(span = { GridItemSpan(2) }) {
                     UpdateBanner(updateState = updateState, onClick = onOpenUpdate)
+                }
+            }
+
+            if (myVietQr.isValid && myVietQr.pinToHome) {
+                item(span = { GridItemSpan(2) }) {
+                    MyVietQrPreviewCard(
+                        profile = myVietQr,
+                        onEditClick = {
+                            tools.firstOrNull { it.id == "qr_studio" }?.let(onOpenTool)
+                        }
+                    )
                 }
             }
 
@@ -404,11 +422,128 @@ fun HubScreen(
                 )
             }
 
+            item(span = { GridItemSpan(2) }) {
+                QuickSettingsTilesBanner()
+            }
+
             item {
                 ComingSoonCard(
                     modifier = Modifier.animateItem()
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun QuickSettingsTilesBanner() {
+    val context = LocalContext.current
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, AccentCyan.copy(alpha = 0.35f), RoundedCornerShape(22.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "⚡ Bộ 4 Nút Bấm Nhanh Trên Thanh Trạng Thái (Quick Settings)",
+                fontWeight = FontWeight.Bold,
+                color = AccentCyan,
+                fontSize = 13.5.sp
+            )
+            Text(
+                text = "Chạm vào nút bên dưới để gắn trực tiếp các công cụ lên thanh kéo thông báo của Android (dùng ngay không cần mở app):",
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                QuickTileChip(
+                    label = "🌙 Hẹn giờ Màn hình",
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        QuickTileActions.requestAddTileToStatusBar(
+                            context,
+                            SleepTimerTileService::class.java,
+                            "Hẹn giờ Màn hình"
+                        )
+                    }
+                )
+                QuickTileChip(
+                    label = "📷 Quét QR / OCR",
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        QuickTileActions.requestAddTileToStatusBar(
+                            context,
+                            ScannerOcrTileService::class.java,
+                            "Quét QR / OCR"
+                        )
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                QuickTileChip(
+                    label = "🏦 Mã VietQR Của Tôi",
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        QuickTileActions.requestAddTileToStatusBar(
+                            context,
+                            MyVietQrTileService::class.java,
+                            "Mã VietQR Của Tôi"
+                        )
+                    }
+                )
+                QuickTileChip(
+                    label = "📥 Tải Video Clipboard",
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        QuickTileActions.requestAddTileToStatusBar(
+                            context,
+                            ClipboardVideoTileService::class.java,
+                            "Tải Video Clipboard"
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickTileChip(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier
+            .border(1.dp, AccentPurple.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
