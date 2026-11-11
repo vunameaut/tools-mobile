@@ -3,6 +3,7 @@ package com.vunameaut.powertimer.tools
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Casino
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DocumentScanner
 import androidx.compose.material.icons.rounded.QrCodeScanner
@@ -14,6 +15,7 @@ import com.vunameaut.powertimer.ui.screens.BillSplitterTool
 import com.vunameaut.powertimer.ui.screens.PowerTimerTool
 import com.vunameaut.powertimer.ui.screens.QrBarcodeStudioTool
 import com.vunameaut.powertimer.ui.screens.QuickOcrClipboardTool
+import com.vunameaut.powertimer.ui.screens.RandomDecisionTool
 import com.vunameaut.powertimer.ui.screens.SoundboxTool
 import com.vunameaut.powertimer.ui.screens.VideoDownloaderTool
 import com.vunameaut.powertimer.ui.theme.AccentAmber
@@ -86,5 +88,13 @@ val ToolRegistry: List<ToolEntry> = listOf(
         icon = Icons.AutoMirrored.Rounded.VolumeUp,
         accent = AccentGreen,
         content = { onBack -> SoundboxTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "random_decision",
+        title = "Vòng Quay & Quyết Định",
+        description = "Vòng quay ngẫu nhiên (Hôm nay ăn gì?) • Tung đồng xu 3D • Đổ xúc xắc 1-6 viên",
+        icon = Icons.Rounded.Casino,
+        accent = AccentAmber,
+        content = { onBack -> RandomDecisionTool(onExit = onBack) }
     )
 )
