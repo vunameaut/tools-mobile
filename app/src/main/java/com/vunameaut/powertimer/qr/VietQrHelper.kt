@@ -65,11 +65,27 @@ data class QrHistoryItem(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+data class PinnedQrItem(
+    val id: Long = System.currentTimeMillis(),
+    val type: String, // "VIETQR", "LINK", "WIFI", "BARCODE"
+    val title: String,
+    val subtitle: String = "",
+    val rawContent: String,
+    val bankBin: String = "",
+    val accountNumber: String = "",
+    val accountName: String = "",
+    val amount: String = "",
+    val memo: String = "",
+    val fgColorHex: Long = 0xFF000000L,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 object VietQrHelper {
 
     private const val PREF_NAME = "qr_studio_prefs"
     private const val KEY_MY_VIETQR = "my_vietqr_profile"
     private const val KEY_QR_HISTORY = "qr_history_items"
+    private const val KEY_PINNED_QRS = "pinned_qr_items_v1"
 
     val SUPPORTED_BANKS: List<BankInfo> = listOf(
         BankInfo("MBBank", "MB Bank (Quân Đội)", "970422", 0xFF1E40AF),
@@ -581,6 +597,119 @@ object VietQrHelper {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_QR_HISTORY, arr.toString())
+            .apply()
+    }
+
+    /**
+     * Tải danh sách các mã QR đã ghim. Nếu chưa có mã nào nhưng người dùng đã lưu VietQR cá nhân
+     * với `pinToHome = true`, tự động đồng bộ mã VietQR đó vào danh sách ghim để mở lên thấy ngay.
+     */
+    fun loadPinnedQrs(context: Context): List<PinnedQrItem> {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_PINNED_QRS, null)
+        if (raw == null) {
+            val myViet = loadMyVietQrProfile(context)
+            if (myViet.isValid && myViet.pinToHome) {
+                val amt = myViet.defaultAmount.replace(Regex("[^0-9]"), "").toLongOrNull()
+                val payload = buildVietQrPayload(myViet.bankBin, myViet.accountNumber, amt, myViet.defaultMemo)
+                val autoItem = PinnedQrItem(
+                    id = 1L,
+                    type = "VIETQR",
+                    title = "VietQR ${myViet.bankShortName} - ${myViet.accountNumber}",
+                    subtitle = myViet.accountName.ifBlank { "Chuyển khoản nhanh NAPAS 247" },
+                    rawContent = payload,
+                    bankBin = myViet.bankBin,
+                    accountNumber = myViet.accountNumber,
+                    accountName = myViet.accountName,
+                    amount = myViet.defaultAmount,
+                    memo = myViet.defaultMemo
+                )
+                savePinnedQrs(context, listOf(autoItem))
+                return listOf(autoItem)
+            }
+            return emptyList()
+        }
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(
+                        PinnedQrItem(
+                            id = o.optLong("id", i.toLong()),
+                            type = o.optString("type", "LINK"),
+                            title = o.optString("title", "Mã QR Đã Ghim"),
+                            subtitle = o.optString("subtitle", ""),
+                            rawContent = o.optString("rawContent", ""),
+                            bankBin = o.optString("bankBin", ""),
+                            accountNumber = o.optString("accountNumber", ""),
+                            accountName = o.optString("accountName", ""),
+                            amount = o.optString("amount", ""),
+                            memo = o.optString("memo", ""),
+                            fgColorHex = o.optLong("fgColorHex", 0xFF000000L),
+                            timestamp = o.optLong("timestamp", System.currentTimeMillis())
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun pinQrItem(context: Context, item: PinnedQrItem): List<PinnedQrItem> {
+        val current = loadPinnedQrs(context).toMutableList()
+        current.removeAll { it.rawContent == item.rawContent }
+        current.add(0, item)
+        val trimmed = current.take(15)
+        savePinnedQrs(context, trimmed)
+        return trimmed
+    }
+
+    fun unpinQrById(context: Context, id: Long): List<PinnedQrItem> {
+        val updated = loadPinnedQrs(context).filterNot { it.id == id }
+        savePinnedQrs(context, updated)
+        return updated
+    }
+
+    fun unpinQrByContent(context: Context, rawContent: String): List<PinnedQrItem> {
+        val updated = loadPinnedQrs(context).filterNot { it.rawContent == rawContent }
+        savePinnedQrs(context, updated)
+        return updated
+    }
+
+    fun setPrimaryPinnedQr(context: Context, id: Long): List<PinnedQrItem> {
+        val current = loadPinnedQrs(context).toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx > 0) {
+            val picked = current.removeAt(idx)
+            current.add(0, picked)
+            savePinnedQrs(context, current)
+        }
+        return current
+    }
+
+    private fun savePinnedQrs(context: Context, list: List<PinnedQrItem>) {
+        val arr = JSONArray()
+        for (item in list) {
+            arr.put(
+                JSONObject().apply {
+                    put("id", item.id)
+                    put("type", item.type)
+                    put("title", item.title)
+                    put("subtitle", item.subtitle)
+                    put("rawContent", item.rawContent)
+                    put("bankBin", item.bankBin)
+                    put("accountNumber", item.accountNumber)
+                    put("accountName", item.accountName)
+                    put("amount", item.amount)
+                    put("memo", item.memo)
+                    put("fgColorHex", item.fgColorHex)
+                    put("timestamp", item.timestamp)
+                }
+            )
+        }
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_PINNED_QRS, arr.toString())
             .apply()
     }
 }
