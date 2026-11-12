@@ -4,8 +4,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.core.app.NotificationCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -28,11 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,14 +70,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.vunameaut.powertimer.service.MoneySoundboxService
+import com.vunameaut.powertimer.service.ScannedNotificationItem
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
 import com.vunameaut.powertimer.ui.theme.AccentGreen
 import com.vunameaut.powertimer.ui.theme.AccentPurple
 import com.vunameaut.powertimer.ui.theme.AccentRed
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -89,6 +93,7 @@ import java.util.Locale
 fun SoundboxTool(onExit: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
     BackHandler(onBack = onExit)
 
     var hasNotificationAccess by remember {
@@ -100,6 +105,11 @@ fun SoundboxTool(onExit: () -> Unit) {
     var speechRate by remember { mutableFloatStateOf(MoneySoundboxService.getSpeechRate(context)) }
 
     val transactions by MoneySoundboxService.transactionsFlow.collectAsState()
+    val isServiceConnected by MoneySoundboxService.serviceConnectedFlow.collectAsState()
+
+    var scannedNotifications by remember { mutableStateOf<List<ScannedNotificationItem>>(emptyList()) }
+    var scanStatusMessage by remember { mutableStateOf<String?>(null) }
+    var isScanning by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         MoneySoundboxService.ensureServiceRebound(context)
@@ -213,35 +223,67 @@ fun SoundboxTool(onExit: () -> Unit) {
             } else {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = AccentGreen.copy(alpha = 0.14f),
+                    color = if (isServiceConnected) AccentGreen.copy(alpha = 0.14f) else AccentAmber.copy(alpha = 0.14f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, AccentGreen.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                        .border(
+                            1.dp,
+                            if (isServiceConnected) AccentGreen.copy(alpha = 0.4f) else AccentAmber.copy(alpha = 0.45f),
+                            RoundedCornerShape(16.dp)
+                        )
                 ) {
                     Row(
                         modifier = Modifier.padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = AccentGreen)
+                        Icon(
+                            imageVector = Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = if (isServiceConnected) AccentGreen else AccentAmber
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Loa Soundbox đang trực chiến!",
+                                text = if (isServiceConnected) {
+                                    "Loa Soundbox đang trực chiến (Đã kết nối)!"
+                                } else {
+                                    "Đã cấp quyền (Đang đánh thức kết nối ngầm...)"
+                                },
                                 fontWeight = FontWeight.Bold,
-                                color = AccentGreen,
-                                fontSize = 14.sp
+                                color = if (isServiceConnected) AccentGreen else AccentAmber,
+                                fontSize = 13.5.sp
                             )
                             Text(
-                                text = "Tự động phát chuông Ting-Ting & đọc to số tiền khi có thông báo chuyển khoản đến.",
+                                text = if (isServiceConnected) {
+                                    "Tự động phát chuông Ting-Ting & đọc to số tiền khi có thông báo chuyển khoản đến."
+                                } else {
+                                    "Nếu sau khi cập nhật app mà máy chưa tự đọc, hãy bấm nút Làm mới bên cạnh hoặc Tắt/Bật lại quyền Đọc thông báo 1 lần."
+                                },
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                MoneySoundboxService.forceReconnectNotificationListener(context)
+                                Toast.makeText(
+                                    context,
+                                    "🔄 Đã làm mới kết nối dịch vụ Đọc thông báo!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Làm mới kết nối",
+                                tint = AccentCyan
                             )
                         }
                     }
                 }
             }
 
-            // 2. Thẻ Tổng doanh thu nhận trong ngày + Nút Nghe thử Loa
+            // 2. Thẻ Tổng doanh thu nhận trong ngày + Nút Nghe thử & Quét thông báo hiện tại
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
@@ -344,9 +386,12 @@ fun SoundboxTool(onExit: () -> Unit) {
                         }
                     }
 
+                    // Nút Bắn thử Thông báo Ngân hàng thật (+500.000đ)
                     OutlinedButton(
                         onClick = {
-                            triggerSimulatedBankNotification(context)
+                            scope.launch {
+                                triggerSimulatedBankNotification(context)
+                            }
                         },
                         shape = RoundedCornerShape(14.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
@@ -370,6 +415,241 @@ fun SoundboxTool(onExit: () -> Unit) {
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+
+                    // NÚT MỚI: Quét & Đọc Thông Báo Ngân Hàng Hiện Tại trên thanh trạng thái
+                    Button(
+                        onClick = {
+                            if (!MoneySoundboxService.isNotificationListenerGranted(context)) {
+                                Toast.makeText(
+                                    context,
+                                    "Vui lòng cấp quyền Đọc thông báo trước!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                MoneySoundboxService.openNotificationListenerSettings(context)
+                                return@Button
+                            }
+                            scope.launch {
+                                isScanning = true
+                                scanStatusMessage = "🔍 Đang quét các thông báo hiện có trên thanh trạng thái..."
+                                if (MoneySoundboxService.activeInstance == null) {
+                                    MoneySoundboxService.forceReconnectNotificationListener(context)
+                                    repeat(8) {
+                                        if (MoneySoundboxService.activeInstance != null) return@repeat
+                                        delay(150L)
+                                    }
+                                }
+
+                                if (MoneySoundboxService.activeInstance == null) {
+                                    isScanning = false
+                                    scannedNotifications = emptyList()
+                                    scanStatusMessage =
+                                        "⚠️ Hệ điều hành đang tạm ngắt dịch vụ Đọc thông báo sau khi cập nhật app. Hãy bấm nút \"Mở Cài đặt Đọc thông báo\" bên dưới -> Tắt rồi Bật lại công tắc Tools Hub 1 lần là đọc được ngay!"
+                                    return@launch
+                                }
+
+                                val found = MoneySoundboxService.scanAndReadCurrentNotifications(
+                                    context = context,
+                                    autoSpeakBestMatch = true
+                                )
+                                scannedNotifications = found
+                                isScanning = false
+
+                                val bankMatches = found.count { it.isIncomingMoney || it.isKnownBankApp || it.parsedAmount != null }
+                                scanStatusMessage = when {
+                                    found.isEmpty() ->
+                                        "ℹ️ Hiện không có thông báo nào trên thanh trạng thái. Hãy thử bấm nút \"Bắn thử Thông báo Ngân hàng thật (+500.000đ)\" ở trên rồi bấm quét lại!"
+                                    bankMatches > 0 ->
+                                        "✅ Tìm thấy $bankMatches thông báo Ngân hàng / Số dư (trên tổng số ${found.size} thông báo hiện tại) và đang phát loa đọc!"
+                                    else ->
+                                        "ℹ️ Tìm thấy ${found.size} thông báo trên thanh trạng thái (chưa có thông báo biến động số dư ngân hàng). Bạn có thể bấm nút 🔊 bên cạnh bất kỳ thông báo nào bên dưới để nghe thử!"
+                                }
+                            }
+                        },
+                        enabled = !isScanning,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentPurple,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (isScanning) {
+                                "Đang quét thông báo hiện tại..."
+                            } else {
+                                "Đọc Thông Báo Ngân Hàng Hiện Tại (Trên máy)"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // 2.5. Kết quả quét Thông báo hiện tại trên thanh trạng thái
+            if (scanStatusMessage != null || scannedNotifications.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, AccentPurple.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "📲 Thông báo hiện tại trên thanh trạng thái (${scannedNotifications.size})",
+                                fontWeight = FontWeight.Bold,
+                                color = AccentPurple,
+                                fontSize = 13.5.sp
+                            )
+                            TextButton(
+                                onClick = {
+                                    MoneySoundboxService.openNotificationListenerSettings(context)
+                                }
+                            ) {
+                                Text("Cài đặt quyền", color = AccentCyan, fontSize = 11.5.sp)
+                            }
+                        }
+
+                        scanStatusMessage?.let { msg ->
+                            Text(
+                                text = msg,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        scannedNotifications.forEach { item ->
+                            val isHighlight = item.isIncomingMoney || item.isKnownBankApp || item.parsedAmount != null
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isHighlight) {
+                                    AccentGreen.copy(alpha = 0.12f)
+                                } else {
+                                    MaterialTheme.colorScheme.background.copy(alpha = 0.55f)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        1.dp,
+                                        if (isHighlight) AccentGreen.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.08f),
+                                        RoundedCornerShape(14.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = if (isHighlight) AccentGreen.copy(alpha = 0.22f) else AccentCyan.copy(alpha = 0.18f)
+                                            ) {
+                                                Text(
+                                                    text = item.appName,
+                                                    color = if (isHighlight) AccentGreen else AccentCyan,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            if (item.parsedAmount != null) {
+                                                Text(
+                                                    text = (if (item.isIncomingMoney) "+" else "") +
+                                                        NumberFormat.getNumberInstance(Locale("vi", "VN")).format(item.parsedAmount) + " đ",
+                                                    color = if (item.isIncomingMoney) AccentGreen else AccentAmber,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 13.sp
+                                                )
+                                            }
+                                        }
+                                        if (item.title.isNotBlank()) {
+                                            Spacer(Modifier.height(3.dp))
+                                            Text(
+                                                text = item.title,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.5.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        if (item.body.isNotBlank()) {
+                                            Text(
+                                                text = item.body,
+                                                fontSize = 11.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            if (item.parsedAmount != null) {
+                                                MoneySoundboxService.announceMoneyReceived(
+                                                    context = context,
+                                                    amount = item.parsedAmount,
+                                                    sourceApp = item.appName,
+                                                    rawMessage = "${item.title}: ${item.body}".trim(':', ' '),
+                                                    saveToHistory = true
+                                                )
+                                            } else {
+                                                MoneySoundboxService.announceCustomNotificationText(
+                                                    context = context,
+                                                    sourceApp = item.appName,
+                                                    rawMessage = "${item.title}. ${item.body}".trim('.', ' ')
+                                                )
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isHighlight) AccentGreen else AccentCyan,
+                                            contentColor = Color.Black
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .padding(start = 8.dp)
+                                            .height(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
+                                            contentDescription = "Đọc thông báo này",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Đọc", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -525,7 +805,7 @@ fun SoundboxTool(onExit: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Chưa có giao dịch nhận tiền nào. Hãy bấm nút \"Nghe thử +150k\" ở trên để kiểm tra loa!",
+                        text = "Chưa có giao dịch nhận tiền nào. Hãy bấm nút \"Nghe thử +150k\" hoặc \"Đọc Thông Báo Ngân Hàng Hiện Tại\" ở trên để kiểm tra loa!",
                         fontSize = 12.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(18.dp)
@@ -611,38 +891,49 @@ fun SoundboxTool(onExit: () -> Unit) {
     }
 }
 
-private fun triggerSimulatedBankNotification(context: Context) {
-    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-    val channelId = "soundbox_sim_bank_channel"
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(
-            channelId,
-            "Giả lập Biến động số dư",
-            NotificationManager.IMPORTANCE_HIGH
-        )
-        nm.createNotificationChannel(channel)
+private suspend fun triggerSimulatedBankNotification(context: Context) {
+    MoneySoundboxService.ensureServiceRebound(context)
+    val beforeAnnounceMs = MoneySoundboxService.lastAnnouncedTimestampMs
+
+    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    val simMessage = "TK 9999xxxx +500,000 VND. ND: Khach chuyen khoan"
+
+    if (nm != null) {
+        val channelId = "soundbox_sim_bank_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Giả lập Biến động số dư",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            nm.createNotificationChannel(channel)
+        }
+
+        val notif = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("Biến động số dư MB Bank")
+            .setContentText(simMessage)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(simMessage))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+
+        runCatching {
+            nm.notify((System.currentTimeMillis() % 10000).toInt() + 5000, notif)
+        }
     }
 
-    val notif = NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(android.R.drawable.stat_notify_chat)
-        .setContentTitle("Biến động số dư MB Bank")
-        .setContentText("TK 9999xxxx +500,000 VND. ND: Khach chuyen khoan")
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setAutoCancel(true)
-        .build()
-
-    nm.notify((System.currentTimeMillis() % 10000).toInt() + 5000, notif)
-
-    // Nếu người dùng chưa bật quyền Đọc thông báo, vẫn phát trực tiếp để kiểm tra loa
-    if (!MoneySoundboxService.isNotificationListenerGranted(context)) {
+    // Chờ tối đa 650ms để NotificationListenerService bắt tự động;
+    // nếu hệ điều hành (OriginOS/MIUI) chặn tự bắt thông báo nội bộ hoặc chưa kịp bind lại, tự động phát loa để đảm bảo 100% đọc to!
+    delay(650L)
+    if (MoneySoundboxService.lastAnnouncedTimestampMs <= beforeAnnounceMs) {
+        MoneySoundboxService.forceReconnectNotificationListener(context)
         MoneySoundboxService.announceMoneyReceived(
             context = context,
             amount = 500_000L,
             sourceApp = "MB Bank",
-            rawMessage = "TK 9999xxxx +500,000 VND. ND: Khach chuyen khoan",
+            rawMessage = "Biến động số dư MB Bank: $simMessage",
             saveToHistory = true
         )
     }
 }
-
-
