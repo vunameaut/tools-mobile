@@ -1,24 +1,32 @@
 package com.vunameaut.powertimer.ui.screens
 
+import android.app.ActivityOptions
 import android.app.AlarmManager
 import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
+import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -39,7 +47,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,10 +72,11 @@ import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Cancel
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dialpad
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PhoneCallback
 import androidx.compose.material.icons.rounded.RecordVoiceOver
@@ -105,7 +113,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -114,17 +124,31 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.vunameaut.powertimer.MainActivity
 import com.vunameaut.powertimer.R
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
 import com.vunameaut.powertimer.ui.theme.AccentGreen
-import com.vunameaut.powertimer.ui.theme.AccentPink
 import com.vunameaut.powertimer.ui.theme.AccentRed
 import com.vunameaut.powertimer.ui.theme.PowerTimerTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -186,6 +210,36 @@ private val FAKE_CALLER_PRESETS = listOf(
     )
 )
 
+/**
+ * LifecycleOwner độc lập phục vụ hiển thị giao diện Compose Cuộc gọi đến Toàn màn hình
+ * trực tiếp qua WindowManager (TYPE_APPLICATION_OVERLAY) khi người dùng đã thoát khỏi ứng dụng.
+ */
+private class FakeCallOverlayLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val store = ViewModelStore()
+    private val savedStateController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val viewModelStore: ViewModelStore get() = store
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
+
+    fun onCreate() {
+        savedStateController.performRestore(null)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    fun onDestroy() {
+        runCatching {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            store.clear()
+        }
+    }
+}
+
 object FakeCallScheduler {
     const val PREF_NAME = "fake_call_prefs"
     const val KEY_SCHEDULED_AT = "scheduled_trigger_ms"
@@ -195,21 +249,44 @@ object FakeCallScheduler {
     const val KEY_AVATAR = "caller_avatar"
     const val KEY_VOICE_SCRIPT = "caller_voice_script"
     const val KEY_AUTO_SPEAK = "caller_auto_speak"
-    private const val ALARM_REQ_CODE = 88991
-    const val CHANNEL_ID = "fake_incoming_call_channel"
 
-    private val voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    const val ALARM_REQ_CODE = 88991
+    const val COUNTDOWN_NOTIF_ID = 88990
+    const val CHANNEL_ID = "fake_incoming_call_channel"
+    const val COUNTDOWN_CHANNEL_ID = "fake_call_countdown_channel"
+
+    private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var activeVoicePlayer: MediaPlayer? = null
+    private var ringtonePlayer: MediaPlayer? = null
+    private var activeVibrator: Vibrator? = null
+    private var screenWakeLock: PowerManager.WakeLock? = null
+
+    private var overlayView: ComposeView? = null
+    private var overlayLifecycleOwner: FakeCallOverlayLifecycleOwner? = null
+    var activeCallActivity: FakeCallIncomingActivity? = null
+
+    fun canDrawOverlays(context: Context): Boolean {
+        return Settings.canDrawOverlays(context)
+    }
+
+    fun openOverlayPermissionSettings(context: Context) {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}")
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+    }
 
     /**
-     * Tải trước (Pre-cache) file âm thanh giọng đọc Tiếng Việt tự nhiên (tl=vi) vào bộ nhớ đệm
-     * để khi cuộc gọi đổ chuông và bấm Nghe máy, giọng Tiếng Việt phát ra tức thì, không bao giờ bị đọc giọng Tiếng Anh.
+     * Tải trước (Pre-cache) file âm thanh giọng đọc Tiếng Việt tự nhiên (tl=vi) vào bộ nhớ đệm.
      */
     fun preCacheVietnameseVoice(context: Context, script: String) {
         val clean = script.trim()
         if (clean.isBlank()) return
         val appCtx = context.applicationContext
-        voiceScope.launch(Dispatchers.IO) {
+        mainScope.launch(Dispatchers.IO) {
             getOrDownloadVietnameseVoiceMp3(appCtx, clean)
         }
     }
@@ -261,8 +338,7 @@ object FakeCallScheduler {
         if (clean.isBlank()) return
         val appCtx = context.applicationContext
 
-        voiceScope.launch {
-            // Đảm bảo âm lượng đủ nghe
+        mainScope.launch {
             runCatching {
                 val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
@@ -305,7 +381,6 @@ object FakeCallScheduler {
                 }
             }
 
-            // Dự phòng khi hoàn toàn mất mạng và chưa có file cache
             fallbackTts?.let { engine ->
                 runCatching {
                     val viLocale = Locale.forLanguageTag("vi-VN")
@@ -333,6 +408,246 @@ object FakeCallScheduler {
         activeVoicePlayer = null
     }
 
+    /**
+     * Phát nhạc chuông & rung trực tiếp từ cấp độ Service/Application (kể cả khi người dùng đã thoát khỏi app).
+     * Nếu điện thoại đang để chế độ Rung / Im lặng chuông (STREAM_RING = 0), tự động phát nhạc chuông qua kênh MEDIA
+     * để cuộc gọi giả luôn đổ chuông lớn và chân thực.
+     */
+    fun startRingingAndVibration(context: Context) {
+        val appCtx = context.applicationContext
+        if (ringtonePlayer?.isPlaying == true) return
+
+        stopRingingAndVibration()
+
+        runCatching {
+            val pm = appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+                "PowerTimer:FakeCallScreenWake"
+            )
+            wl.acquire(45_000L)
+            screenWakeLock = wl
+        }
+
+        runCatching {
+            val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val ringVol = am.getStreamVolume(AudioManager.STREAM_RING)
+            val useMediaFallback = am.ringerMode != AudioManager.RINGER_MODE_NORMAL || ringVol == 0
+
+            if (useMediaFallback) {
+                val maxMedia = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                val curMedia = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+                if (curMedia < (maxMedia * 0.5f).toInt()) {
+                    runCatching {
+                        am.setStreamVolume(AudioManager.STREAM_MUSIC, (maxMedia * 0.7f).toInt().coerceAtLeast(1), 0)
+                    }
+                }
+            }
+
+            val ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+
+            ringtonePlayer = MediaPlayer().apply {
+                setDataSource(appCtx, ringUri)
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(
+                            if (useMediaFallback) AudioAttributes.USAGE_MEDIA
+                            else AudioAttributes.USAGE_NOTIFICATION_RINGTONE
+                        )
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                isLooping = true
+                prepare()
+                start()
+            }
+        }
+
+        runCatching {
+            val vib = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = appCtx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                appCtx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            activeVibrator = vib
+            val pattern = longArrayOf(0, 1000, 800, 1000, 800)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib.vibrate(VibrationEffect.createWaveform(pattern, 0))
+            } else {
+                @Suppress("DEPRECATION")
+                vib.vibrate(pattern, 0)
+            }
+        }
+    }
+
+    fun stopRingingAndVibration() {
+        runCatching {
+            ringtonePlayer?.stop()
+            ringtonePlayer?.release()
+        }
+        ringtonePlayer = null
+        runCatching { activeVibrator?.cancel() }
+        activeVibrator = null
+        runCatching {
+            if (screenWakeLock?.isHeld == true) {
+                screenWakeLock?.release()
+            }
+        }
+        screenWakeLock = null
+    }
+
+    /**
+     * Hiển thị giao diện Cuộc gọi đến Toàn màn hình trực tiếp qua WindowManager (TYPE_APPLICATION_OVERLAY).
+     * Giúp cuộc gọi giả bật lên 100% ngay cả khi người dùng đã thoát app ra Màn hình chính, đang lướt Facebook/Zalo/TikTok,
+     * vượt qua cơ chế chặn Background Activity Launch của Android 12-15 & OriginOS/HyperOS.
+     */
+    fun showFullScreenIncomingCallOverlay(context: Context): Boolean {
+        val appCtx = context.applicationContext
+        if (!canDrawOverlays(appCtx)) return false
+
+        mainScope.launch(Dispatchers.Main) {
+            dismissOverlayWindowOnly()
+
+            val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            val callerName = prefs.getString(KEY_CALLER_NAME, "Sếp Hoàng (Giám đốc)") ?: "Sếp Hoàng"
+            val callerNumber = prefs.getString(KEY_CALLER_NUMBER, "0912 388 999") ?: "0912 388 999"
+            val carrier = prefs.getString(KEY_CARRIER, "Viettel 5G • Cuộc gọi thoại HD") ?: "Viettel 5G"
+            val avatarEmoji = prefs.getString(KEY_AVATAR, "👔") ?: "👔"
+            val voiceScript = prefs.getString(KEY_VOICE_SCRIPT, "") ?: ""
+            val autoSpeak = prefs.getBoolean(KEY_AUTO_SPEAK, true)
+
+            val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return@launch
+            val owner = FakeCallOverlayLifecycleOwner().apply { onCreate() }
+            overlayLifecycleOwner = owner
+
+            val composeView = ComposeView(appCtx).apply {
+                setViewTreeLifecycleOwner(owner)
+                setViewTreeViewModelStoreOwner(owner)
+                setViewTreeSavedStateRegistryOwner(owner)
+                setContent {
+                    PowerTimerTheme {
+                        FakeIncomingCallScreenContent(
+                            callerName = callerName,
+                            callerNumber = callerNumber,
+                            carrierLabel = carrier,
+                            avatarEmoji = avatarEmoji,
+                            onAnswer = {
+                                stopRingingAndVibration()
+                                cancelCallNotifications(appCtx)
+                                if (autoSpeak && voiceScript.isNotBlank()) {
+                                    playVietnameseVoiceScript(
+                                        context = appCtx,
+                                        script = voiceScript,
+                                        useSpeaker = false
+                                    )
+                                }
+                            },
+                            onToggleSpeaker = { speakerOn ->
+                                if (voiceScript.isNotBlank()) {
+                                    playVietnameseVoiceScript(
+                                        context = appCtx,
+                                        script = voiceScript,
+                                        useSpeaker = speakerOn
+                                    )
+                                }
+                            },
+                            onReplayVoice = { speakerOn ->
+                                if (voiceScript.isNotBlank()) {
+                                    playVietnameseVoiceScript(
+                                        context = appCtx,
+                                        script = voiceScript,
+                                        useSpeaker = speakerOn
+                                    )
+                                }
+                            },
+                            onEndCall = {
+                                endActiveFakeCall(appCtx)
+                            }
+                        )
+                    }
+                }
+            }
+
+            @Suppress("DEPRECATION")
+            val flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+
+            val lp = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+                },
+                flags,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+
+            runCatching {
+                wm.addView(composeView, lp)
+                overlayView = composeView
+            }
+        }
+        return true
+    }
+
+    fun dismissOverlayWindowOnly() {
+        val view = overlayView
+        val owner = overlayLifecycleOwner
+        overlayView = null
+        overlayLifecycleOwner = null
+
+        if (view != null) {
+            runCatching {
+                val wm = view.context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                wm?.removeViewImmediate(view)
+            }
+        }
+        owner?.onDestroy()
+    }
+
+    fun cancelCallNotifications(context: Context) {
+        runCatching {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(ALARM_REQ_CODE)
+            nm.cancel(COUNTDOWN_NOTIF_ID)
+        }
+    }
+
+    fun endActiveFakeCall(context: Context) {
+        val appCtx = context.applicationContext
+        stopRingingAndVibration()
+        stopActiveVoice()
+        dismissOverlayWindowOnly()
+        cancelCallNotifications(appCtx)
+        runCatching {
+            activeCallActivity?.finish()
+            activeCallActivity = null
+        }
+        runCatching {
+            appCtx.stopService(Intent(appCtx, FakeCallService::class.java))
+        }
+    }
+
     fun scheduleFakeCall(
         context: Context,
         delaySeconds: Int,
@@ -343,7 +658,8 @@ object FakeCallScheduler {
         voiceScript: String,
         autoSpeakOnAnswer: Boolean
     ) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val triggerAt = System.currentTimeMillis() + delaySeconds * 1000L
         prefs.edit()
             .putLong(KEY_SCHEDULED_AT, if (delaySeconds > 0) triggerAt else 0L)
@@ -355,72 +671,107 @@ object FakeCallScheduler {
             .putBoolean(KEY_AUTO_SPEAK, autoSpeakOnAnswer)
             .apply()
 
-        // Tải sẵn giọng đọc Tiếng Việt vào bộ nhớ đệm ngay khi bấm hẹn giờ
         if (voiceScript.isNotBlank()) {
-            preCacheVietnameseVoice(context, voiceScript)
+            preCacheVietnameseVoice(appCtx, voiceScript)
         }
 
         if (delaySeconds <= 0) {
-            launchIncomingCallNow(context)
+            launchIncomingCallNow(appCtx)
             return
         }
 
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, FakeCallAlarmReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
+        // 1. Khởi chạy Foreground Service đếm ngược ngầm (giữ WakeLock để không bị hệ thống đóng băng khi thoát app)
+        val serviceIntent = Intent(appCtx, FakeCallService::class.java).apply {
+            action = FakeCallService.ACTION_START_COUNTDOWN
+            putExtra(FakeCallService.EXTRA_TRIGGER_AT_MS, triggerAt)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                appCtx.startForegroundService(serviceIntent)
+            } else {
+                appCtx.startService(serviceIntent)
+            }
+        }
+
+        // 2. Đăng ký thêm AlarmClock cấp hệ thống (được Android miễn trừ quyền mở Activity nền)
+        val alarmManager = appCtx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val broadcastIntent = Intent(appCtx, FakeCallAlarmReceiver::class.java)
+        val broadcastPi = PendingIntent.getBroadcast(
+            appCtx,
             ALARM_REQ_CODE,
-            intent,
+            broadcastIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val showActivityIntent = Intent(appCtx, FakeCallIncomingActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val showActivityPi = PendingIntent.getActivity(
+            appCtx,
+            ALARM_REQ_CODE + 1,
+            showActivityIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-            }
+            val clockInfo = AlarmManager.AlarmClockInfo(triggerAt, showActivityPi)
+            alarmManager.setAlarmClock(clockInfo, broadcastPi)
         }.onFailure {
-            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, broadcastPi)
+                } else {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, broadcastPi)
+                }
+            }
         }
     }
 
     fun cancelScheduledCall(context: Context) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().putLong(KEY_SCHEDULED_AT, 0L).apply()
 
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, FakeCallAlarmReceiver::class.java)
+        val alarmManager = appCtx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(appCtx, FakeCallAlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
-            context,
+            appCtx,
             ALARM_REQ_CODE,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        alarmManager.cancel(pendingIntent)
+        runCatching { alarmManager.cancel(pendingIntent) }
 
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.cancel(ALARM_REQ_CODE)
+        endActiveFakeCall(appCtx)
     }
 
     fun launchIncomingCallNow(context: Context) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().putLong(KEY_SCHEDULED_AT, 0L).apply()
 
         val callerName = prefs.getString(KEY_CALLER_NAME, "Sếp Hoàng (Giám đốc)") ?: "Sếp Hoàng"
         val callerNumber = prefs.getString(KEY_CALLER_NUMBER, "0912 388 999") ?: "0912 388 999"
 
-        val callIntent = Intent(context, FakeCallIncomingActivity::class.java).apply {
+        // Bước 1: Đánh thức màn hình + Phát nhạc chuông & Rung ngay lập tức ở cấp Service/Application
+        startRingingAndVibration(appCtx)
+
+        // Bước 2: Nếu đã có quyền Vẽ đè (Hiển thị trên ứng dụng khác), bung ngay màn hình Cuộc gọi đến Toàn màn hình
+        // đè lên Màn hình chính / Zalo / TikTok (100% không bị chặn bởi Background Activity Launch)
+        val overlayShown = showFullScreenIncomingCallOverlay(appCtx)
+
+        val callIntent = Intent(appCtx, FakeCallIncomingActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             )
         }
 
-        // Gửi kèm Full-Screen Notification để đánh thức màn hình khóa trên Android 10-15
+        // Bước 3: Gửi kèm Full-Screen Call Notification (có nút Nghe máy / Từ chối) để đánh thức màn hình khóa
         runCatching {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val chan = NotificationChannel(
                     CHANNEL_ID,
@@ -429,37 +780,238 @@ object FakeCallScheduler {
                 ).apply {
                     description = "Hiển thị giao diện cuộc gọi đến toàn màn hình"
                     setSound(null, null)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 }
                 nm.createNotificationChannel(chan)
             }
+
             val fullScreenPi = PendingIntent.getActivity(
-                context,
+                appCtx,
                 ALARM_REQ_CODE,
                 callIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+
+            val declineIntent = Intent(appCtx, FakeCallService::class.java).apply {
+                action = FakeCallService.ACTION_DECLINE_CALL
+            }
+            val declinePi = PendingIntent.getService(
+                appCtx,
+                ALARM_REQ_CODE + 2,
+                declineIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notif = NotificationCompat.Builder(appCtx, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(callerName)
-                .setContentText("Cuộc gọi đến: $callerNumber")
+                .setContentTitle("📞 $callerName")
+                .setContentText("Cuộc gọi đến: $callerNumber (Chạm để mở)")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setFullScreenIntent(fullScreenPi, true)
-                .setAutoCancel(true)
+                .setContentIntent(fullScreenPi)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Từ chối", declinePi)
+                .addAction(android.R.drawable.ic_menu_call, "Trả lời", fullScreenPi)
+                .setAutoCancel(false)
                 .setOngoing(true)
                 .build()
             nm.notify(ALARM_REQ_CODE, notif)
+
+            // Trên Android 14+, thử kích hoạt PendingIntent với quyền Background Activity Start
+            if (!overlayShown) {
+                if (Build.VERSION.SDK_INT >= 34) {
+                    val options = ActivityOptions.makeBasic().apply {
+                        setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                        )
+                    }
+                    fullScreenPi.send(appCtx, 0, null, null, null, null, options.toBundle())
+                }
+            }
         }
 
-        runCatching {
-            context.startActivity(callIntent)
+        // Mở Activity khi màn hình đang khóa hoặc khi chưa bật quyền Overlay
+        val km = appCtx.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val isDeviceLocked = km?.isKeyguardLocked == true
+        if (!overlayShown || isDeviceLocked) {
+            runCatching {
+                appCtx.startActivity(callIntent)
+            }
         }
+    }
+}
+
+/**
+ * Foreground Service giữ tiến trình đếm ngược Cuộc Gọi Giả sống 100% khi người dùng thoát ra ngoài ứng dụng
+ * hoặc khóa màn hình điện thoại.
+ */
+class FakeCallService : Service() {
+
+    companion object {
+        const val ACTION_START_COUNTDOWN = "com.vunameaut.powertimer.FAKE_CALL_START_COUNTDOWN"
+        const val ACTION_DECLINE_CALL = "com.vunameaut.powertimer.FAKE_CALL_DECLINE"
+        const val ACTION_TRIGGER_NOW = "com.vunameaut.powertimer.FAKE_CALL_TRIGGER_NOW"
+        const val EXTRA_TRIGGER_AT_MS = "extra_trigger_at_ms"
+    }
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var countdownJob: Job? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createCountdownChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_DECLINE_CALL -> {
+                FakeCallScheduler.cancelScheduledCall(applicationContext)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_TRIGGER_NOW -> {
+                FakeCallScheduler.launchIncomingCallNow(applicationContext)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_START_COUNTDOWN -> {
+                val prefs = getSharedPreferences(FakeCallScheduler.PREF_NAME, Context.MODE_PRIVATE)
+                val triggerAt = intent.getLongExtra(
+                    EXTRA_TRIGGER_AT_MS,
+                    prefs.getLong(FakeCallScheduler.KEY_SCHEDULED_AT, 0L)
+                )
+                val callerName = prefs.getString(FakeCallScheduler.KEY_CALLER_NAME, "Sếp Tổng") ?: "Sếp Tổng"
+                val remainSec = ((triggerAt - System.currentTimeMillis() + 999L) / 1000L).toInt().coerceAtLeast(1)
+
+                startForeground(
+                    FakeCallScheduler.COUNTDOWN_NOTIF_ID,
+                    buildCountdownNotification(callerName, remainSec)
+                )
+                acquireCpuWakeLock((remainSec + 60) * 1000L)
+                startCountdownLoop(triggerAt, callerName)
+            }
+        }
+        return START_STICKY
+    }
+
+    private fun startCountdownLoop(triggerAt: Long, callerName: String) {
+        countdownJob?.cancel()
+        countdownJob = serviceScope.launch {
+            var lastNotifSec = -1
+            while (isActive) {
+                val now = System.currentTimeMillis()
+                if (now >= triggerAt) {
+                    break
+                }
+                val remSec = ((triggerAt - now + 999L) / 1000L).toInt()
+                if (remSec != lastNotifSec) {
+                    lastNotifSec = remSec
+                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    nm.notify(
+                        FakeCallScheduler.COUNTDOWN_NOTIF_ID,
+                        buildCountdownNotification(callerName, remSec)
+                    )
+                }
+                delay(250L)
+            }
+
+            // Đúng giờ hẹn -> Kích hoạt đổ chuông & bung màn hình Cuộc gọi giả ngay!
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(FakeCallScheduler.COUNTDOWN_NOTIF_ID)
+            FakeCallScheduler.launchIncomingCallNow(applicationContext)
+            stopSelf()
+        }
+    }
+
+    private fun acquireCpuWakeLock(timeoutMs: Long) {
+        runCatching {
+            if (cpuWakeLock?.isHeld == true) cpuWakeLock?.release()
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            cpuWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PowerTimer:FakeCallCountdownLock").apply {
+                acquire(timeoutMs)
+            }
+        }
+    }
+
+    private fun createCountdownChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val chan = NotificationChannel(
+                FakeCallScheduler.COUNTDOWN_CHANNEL_ID,
+                "Hẹn giờ Cuộc gọi giả",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Đếm ngược ngầm chờ kích hoạt cuộc gọi giả"
+                setShowBadge(false)
+            }
+            nm.createNotificationChannel(chan)
+        }
+    }
+
+    private fun buildCountdownNotification(callerName: String, remainSec: Int): android.app.Notification {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val openAppPi = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val cancelIntent = Intent(this, FakeCallService::class.java).apply {
+            action = ACTION_DECLINE_CALL
+        }
+        val cancelPi = PendingIntent.getService(
+            this,
+            1,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val callNowIntent = Intent(this, FakeCallService::class.java).apply {
+            action = ACTION_TRIGGER_NOW
+        }
+        val callNowPi = PendingIntent.getService(
+            this,
+            2,
+            callNowIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, FakeCallScheduler.COUNTDOWN_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("⏳ Cuộc gọi giả từ $callerName sau ${remainSec}s")
+            .setContentText("Bạn có thể thoát app hoặc khóa màn hình, máy sẽ tự đổ chuông")
+            .setContentIntent(openAppPi)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(0, "Đổ chuông ngay", callNowPi)
+            .addAction(0, "Hủy", cancelPi)
+            .build()
+    }
+
+    override fun onDestroy() {
+        countdownJob?.cancel()
+        runCatching {
+            if (cpuWakeLock?.isHeld == true) cpuWakeLock?.release()
+        }
+        super.onDestroy()
     }
 }
 
 class FakeCallAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        FakeCallScheduler.launchIncomingCallNow(context)
+        val prefs = context.getSharedPreferences(FakeCallScheduler.PREF_NAME, Context.MODE_PRIVATE)
+        val scheduledAt = prefs.getLong(FakeCallScheduler.KEY_SCHEDULED_AT, 0L)
+        // Nếu FakeCallService chưa kích hoạt thì AlarmReceiver kích hoạt dự phòng
+        if (scheduledAt != 0L) {
+            FakeCallScheduler.launchIncomingCallNow(context)
+        }
     }
 }
 
@@ -467,9 +1019,21 @@ class FakeCallAlarmReceiver : BroadcastReceiver() {
 @Composable
 fun FakeCallTool(onExit: () -> Unit) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     BackHandler(onBack = onExit)
 
     val prefs = remember { context.getSharedPreferences(FakeCallScheduler.PREF_NAME, Context.MODE_PRIVATE) }
+    var hasOverlayPermission by remember { mutableStateOf(FakeCallScheduler.canDrawOverlays(context)) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = FakeCallScheduler.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var selectedPresetIdx by remember { mutableIntStateOf(0) }
     var callerName by remember {
@@ -518,7 +1082,7 @@ fun FakeCallTool(onExit: () -> Unit) {
                             fontSize = 18.sp
                         )
                         Text(
-                            text = "Hẹn giờ Sếp / Mẹ gọi đến • Giao diện & Nhạc chuông như thật",
+                            text = "Hẹn giờ Sếp / Mẹ gọi đến • Chạy ngầm cả khi thoát App",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -546,6 +1110,72 @@ fun FakeCallTool(onExit: () -> Unit) {
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // 0. Thẻ kiểm tra quyền Hiển thị trên ứng dụng khác (Để bung cuộc gọi khi đã thoát khỏi App)
+            if (!hasOverlayPermission) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = AccentAmber.copy(alpha = 0.15f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, AccentAmber.copy(alpha = 0.5f), RoundedCornerShape(18.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Rounded.Layers, contentDescription = null, tint = AccentAmber)
+                            Text(
+                                text = "Bật quyền Hiển thị khi thoát ra ngoài App",
+                                fontWeight = FontWeight.Bold,
+                                color = AccentAmber,
+                                fontSize = 13.5.sp
+                            )
+                        }
+                        Text(
+                            text = "Để màn hình Cuộc gọi đến tự động bật đè lên Màn hình chính, Zalo, Facebook hay TikTok khi bạn đã thoát khỏi ứng dụng, hãy cấp quyền \"Hiển thị trên ứng dụng khác\".",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                        )
+                        Button(
+                            onClick = { FakeCallScheduler.openOverlayPermissionSettings(context) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AccentAmber,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Bật quyền Hiển thị trên ứng dụng khác", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = AccentGreen.copy(alpha = 0.12f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, AccentGreen.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = "Sẵn sàng chạy ngầm: Khi hẹn giờ xong, bạn có thể thoát hẳn ra ngoài màn hình chính hoặc mở app khác, đúng giờ máy sẽ tự đổ chuông & hiện cuộc gọi!",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Trạng thái đang đếm ngược chờ đổ chuông
             if (remainingCountdownSec > 0) {
                 Surface(
@@ -561,7 +1191,7 @@ fun FakeCallTool(onExit: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "⏳ ĐANG HẸN GIỜ CUỘC GỌI ĐẾN",
+                            text = "⏳ ĐANG HẸN GIỜ CUỘC GỌI ĐẾN (CHẠY NGẦM)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
                             color = AccentGreen
@@ -579,7 +1209,7 @@ fun FakeCallTool(onExit: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Người gọi: $callerName ($phoneNumber)\nBạn có thể thoát ra màn hình chính hoặc úp điện thoại xuống bàn, đúng giờ máy sẽ tự đổ chuông!",
+                            text = "Người gọi: $callerName ($phoneNumber)\nBạn có thể bấm nút Home thoát ra ngoài hoặc úp điện thoại xuống bàn, đúng giờ máy sẽ tự đổ chuông!",
                             fontSize = 12.sp,
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -814,7 +1444,7 @@ fun FakeCallTool(onExit: () -> Unit) {
                                 scheduledTargetMs = System.currentTimeMillis() + selectedDelaySec * 1000L
                                 Toast.makeText(
                                     context,
-                                    "📞 Đã hẹn giờ! Điện thoại sẽ đổ chuông sau $selectedDelaySec giây.",
+                                    "📞 Đã hẹn giờ! Bạn có thể thoát khỏi app ngay bây giờ, máy sẽ tự đổ chuông sau $selectedDelaySec giây.",
                                     Toast.LENGTH_LONG
                                 ).show()
                             },
@@ -877,8 +1507,6 @@ fun FakeCallTool(onExit: () -> Unit) {
  */
 class FakeCallIncomingActivity : ComponentActivity() {
 
-    private var ringtonePlayer: MediaPlayer? = null
-    private var vibrator: Vibrator? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
@@ -888,6 +1516,7 @@ class FakeCallIncomingActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         super.onCreate(savedInstanceState)
+        FakeCallScheduler.activeCallActivity = this
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -924,7 +1553,7 @@ class FakeCallIncomingActivity : ComponentActivity() {
             }
         }, "com.google.android.tts")
 
-        startRingingAndVibration()
+        FakeCallScheduler.startRingingAndVibration(this)
 
         setContent {
             PowerTimerTheme {
@@ -934,8 +1563,8 @@ class FakeCallIncomingActivity : ComponentActivity() {
                     carrierLabel = carrier,
                     avatarEmoji = avatarEmoji,
                     onAnswer = {
-                        stopRingingAndVibration()
-                        cancelCallNotification()
+                        FakeCallScheduler.stopRingingAndVibration()
+                        FakeCallScheduler.cancelCallNotifications(this)
                         if (autoSpeak && voiceScript.isNotBlank()) {
                             speakCallerScript(voiceScript, useSpeaker = false)
                         }
@@ -951,8 +1580,7 @@ class FakeCallIncomingActivity : ComponentActivity() {
                         }
                     },
                     onEndCall = {
-                        stopRingingAndVibration()
-                        cancelCallNotification()
+                        FakeCallScheduler.endActiveFakeCall(this)
                         finish()
                     }
                 )
@@ -960,40 +1588,10 @@ class FakeCallIncomingActivity : ComponentActivity() {
         }
     }
 
-    private fun startRingingAndVibration() {
-        runCatching {
-            val ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            ringtonePlayer = MediaPlayer().apply {
-                setDataSource(this@FakeCallIncomingActivity, ringUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
-            }
-        }
-
-        runCatching {
-            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vm.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-            val pattern = longArrayOf(0, 1000, 800, 1000, 800)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(pattern, 0)
-            }
-        }
+    override fun onResume() {
+        super.onResume()
+        // Nếu Activity đã hiển thị lên tiền cảnh thành công, ẩn lớp phủ Overlay để không hiển thị 2 lớp trùng nhau
+        FakeCallScheduler.dismissOverlayWindowOnly()
     }
 
     private fun speakCallerScript(script: String, useSpeaker: Boolean) {
@@ -1005,25 +1603,10 @@ class FakeCallIncomingActivity : ComponentActivity() {
         )
     }
 
-    private fun stopRingingAndVibration() {
-        runCatching {
-            ringtonePlayer?.stop()
-            ringtonePlayer?.release()
-        }
-        ringtonePlayer = null
-        runCatching { vibrator?.cancel() }
-    }
-
-    private fun cancelCallNotification() {
-        runCatching {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.cancel(88991)
-        }
-    }
-
     override fun onDestroy() {
-        stopRingingAndVibration()
-        FakeCallScheduler.stopActiveVoice()
+        if (FakeCallScheduler.activeCallActivity === this) {
+            FakeCallScheduler.activeCallActivity = null
+        }
         runCatching {
             tts?.stop()
             tts?.shutdown()
@@ -1400,4 +1983,3 @@ private fun InCallActionButton(
         )
     }
 }
-
