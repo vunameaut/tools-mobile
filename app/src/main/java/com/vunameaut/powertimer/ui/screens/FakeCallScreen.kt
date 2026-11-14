@@ -24,6 +24,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
@@ -32,8 +33,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -73,13 +76,18 @@ import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MicOff
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PhoneCallback
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -105,6 +113,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -249,6 +258,9 @@ object FakeCallScheduler {
     const val KEY_AVATAR = "caller_avatar"
     const val KEY_VOICE_SCRIPT = "caller_voice_script"
     const val KEY_AUTO_SPEAK = "caller_auto_speak"
+    const val KEY_USE_CUSTOM_AUDIO = "caller_use_custom_audio"
+    const val KEY_CUSTOM_AUDIO_PATH = "caller_custom_audio_path"
+    const val KEY_CUSTOM_AUDIO_NAME = "caller_custom_audio_name"
 
     const val ALARM_REQ_CODE = 88991
     const val COUNTDOWN_NOTIF_ID = 88990
@@ -408,6 +420,146 @@ object FakeCallScheduler {
         activeVoicePlayer = null
     }
 
+    fun importCustomAudioFromUri(context: Context, uri: Uri): Pair<String, String>? {
+        val appCtx = context.applicationContext
+        return runCatching {
+            var displayName = "cuoc_goi_gia.mp3"
+            appCtx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) {
+                        val name = cursor.getString(idx)
+                        if (!name.isNullOrBlank()) displayName = name
+                    }
+                }
+            }
+
+            val ext = displayName.substringAfterLast('.', "mp3")
+                .lowercase(Locale.US)
+                .takeIf { it.length in 2..5 && it.all { ch -> ch.isLetterOrDigit() } }
+                ?: "mp3"
+
+            val audioDir = File(appCtx.filesDir, "fake_call_audio").apply { mkdirs() }
+            audioDir.listFiles()?.forEach { oldFile ->
+                runCatching { oldFile.delete() }
+            }
+
+            val destFile = File(audioDir, "custom_call_audio_${System.currentTimeMillis()}.$ext")
+            appCtx.contentResolver.openInputStream(uri)?.use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+
+            if (!destFile.exists() || destFile.length() <= 0L) {
+                runCatching { destFile.delete() }
+                return null
+            }
+
+            appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
+                .putString(KEY_CUSTOM_AUDIO_PATH, destFile.absolutePath)
+                .putString(KEY_CUSTOM_AUDIO_NAME, displayName)
+                .putBoolean(KEY_USE_CUSTOM_AUDIO, true)
+                .apply()
+
+            Pair(destFile.absolutePath, displayName)
+        }.getOrNull()
+    }
+
+    fun clearCustomAudio(context: Context) {
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val oldPath = prefs.getString(KEY_CUSTOM_AUDIO_PATH, "") ?: ""
+        if (oldPath.isNotBlank()) {
+            runCatching { File(oldPath).delete() }
+        }
+        prefs.edit()
+            .remove(KEY_CUSTOM_AUDIO_PATH)
+            .remove(KEY_CUSTOM_AUDIO_NAME)
+            .putBoolean(KEY_USE_CUSTOM_AUDIO, false)
+            .apply()
+    }
+
+    fun updateActiveVoiceVolume(useSpeaker: Boolean): Boolean {
+        val player = activeVoicePlayer ?: return false
+        return runCatching {
+            if (player.isPlaying) {
+                val vol = if (useSpeaker) 1.0f else 0.55f
+                player.setVolume(vol, vol)
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
+    }
+
+    fun playCustomAudioFile(
+        context: Context,
+        audioPath: String,
+        useSpeaker: Boolean = true,
+        onCompletion: (() -> Unit)? = null
+    ): Boolean {
+        val file = File(audioPath)
+        if (!file.exists() || file.length() <= 0L) return false
+        val appCtx = context.applicationContext
+
+        return runCatching {
+            val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            if (cur == 0 && max > 0) {
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, (max * 0.65f).toInt().coerceAtLeast(1), 0)
+            }
+
+            stopActiveVoice()
+            val mp = MediaPlayer()
+            activeVoicePlayer = mp
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            mp.setDataSource(file.absolutePath)
+            mp.prepare()
+            val vol = if (useSpeaker) 1.0f else 0.55f
+            mp.setVolume(vol, vol)
+            mp.setOnCompletionListener { player ->
+                player.release()
+                if (activeVoicePlayer === player) activeVoicePlayer = null
+                onCompletion?.invoke()
+            }
+            mp.start()
+            true
+        }.getOrDefault(false)
+    }
+
+    fun playConfiguredCallAudio(
+        context: Context,
+        script: String,
+        useCustomAudio: Boolean,
+        customAudioPath: String,
+        useSpeaker: Boolean = true,
+        fallbackTts: TextToSpeech? = null
+    ) {
+        if (useCustomAudio && customAudioPath.isNotBlank()) {
+            val played = playCustomAudioFile(
+                context = context,
+                audioPath = customAudioPath,
+                useSpeaker = useSpeaker
+            )
+            if (played) return
+        }
+        if (script.isNotBlank()) {
+            playVietnameseVoiceScript(
+                context = context,
+                script = script,
+                useSpeaker = useSpeaker,
+                fallbackTts = fallbackTts
+            )
+        }
+    }
+
     /**
      * Phát nhạc chuông & rung trực tiếp từ cấp độ Service/Application (kể cả khi người dùng đã thoát khỏi app).
      * Nếu điện thoại đang để chế độ Rung / Im lặng chuông (STREAM_RING = 0), tự động phát nhạc chuông qua kênh MEDIA
@@ -522,6 +674,8 @@ object FakeCallScheduler {
             val avatarEmoji = prefs.getString(KEY_AVATAR, "👔") ?: "👔"
             val voiceScript = prefs.getString(KEY_VOICE_SCRIPT, "") ?: ""
             val autoSpeak = prefs.getBoolean(KEY_AUTO_SPEAK, true)
+            val useCustomAudio = prefs.getBoolean(KEY_USE_CUSTOM_AUDIO, false)
+            val customAudioPath = prefs.getString(KEY_CUSTOM_AUDIO_PATH, "") ?: ""
 
             val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return@launch
             val owner = FakeCallOverlayLifecycleOwner().apply { onCreate() }
@@ -541,16 +695,18 @@ object FakeCallScheduler {
                             onAnswer = {
                                 stopRingingAndVibration()
                                 cancelCallNotifications(appCtx)
-                                if (autoSpeak && voiceScript.isNotBlank()) {
-                                    playVietnameseVoiceScript(
+                                if (autoSpeak) {
+                                    playConfiguredCallAudio(
                                         context = appCtx,
                                         script = voiceScript,
+                                        useCustomAudio = useCustomAudio,
+                                        customAudioPath = customAudioPath,
                                         useSpeaker = false
                                     )
                                 }
                             },
                             onToggleSpeaker = { speakerOn ->
-                                if (voiceScript.isNotBlank()) {
+                                if (!updateActiveVoiceVolume(speakerOn) && !useCustomAudio && voiceScript.isNotBlank()) {
                                     playVietnameseVoiceScript(
                                         context = appCtx,
                                         script = voiceScript,
@@ -559,13 +715,13 @@ object FakeCallScheduler {
                                 }
                             },
                             onReplayVoice = { speakerOn ->
-                                if (voiceScript.isNotBlank()) {
-                                    playVietnameseVoiceScript(
-                                        context = appCtx,
-                                        script = voiceScript,
-                                        useSpeaker = speakerOn
-                                    )
-                                }
+                                playConfiguredCallAudio(
+                                    context = appCtx,
+                                    script = voiceScript,
+                                    useCustomAudio = useCustomAudio,
+                                    customAudioPath = customAudioPath,
+                                    useSpeaker = speakerOn
+                                )
                             },
                             onEndCall = {
                                 endActiveFakeCall(appCtx)
@@ -656,7 +812,8 @@ object FakeCallScheduler {
         carrier: String,
         avatarEmoji: String,
         voiceScript: String,
-        autoSpeakOnAnswer: Boolean
+        autoSpeakOnAnswer: Boolean,
+        useCustomAudio: Boolean = false
     ) {
         val appCtx = context.applicationContext
         val prefs = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -669,9 +826,10 @@ object FakeCallScheduler {
             .putString(KEY_AVATAR, avatarEmoji)
             .putString(KEY_VOICE_SCRIPT, voiceScript)
             .putBoolean(KEY_AUTO_SPEAK, autoSpeakOnAnswer)
+            .putBoolean(KEY_USE_CUSTOM_AUDIO, useCustomAudio)
             .apply()
 
-        if (voiceScript.isNotBlank()) {
+        if (!useCustomAudio && voiceScript.isNotBlank()) {
             preCacheVietnameseVoice(appCtx, voiceScript)
         }
 
@@ -1054,6 +1212,55 @@ fun FakeCallTool(onExit: () -> Unit) {
     var autoSpeakOnAnswer by remember {
         mutableStateOf(prefs.getBoolean(FakeCallScheduler.KEY_AUTO_SPEAK, true))
     }
+    var useCustomAudio by remember {
+        mutableStateOf(prefs.getBoolean(FakeCallScheduler.KEY_USE_CUSTOM_AUDIO, false))
+    }
+    var customAudioPath by remember {
+        mutableStateOf(prefs.getString(FakeCallScheduler.KEY_CUSTOM_AUDIO_PATH, "") ?: "")
+    }
+    var customAudioName by remember {
+        mutableStateOf(prefs.getString(FakeCallScheduler.KEY_CUSTOM_AUDIO_NAME, "") ?: "")
+    }
+    var isPreviewingCustomAudio by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isPreviewingCustomAudio) {
+                FakeCallScheduler.stopActiveVoice()
+            }
+        }
+    }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val imported = withContext(Dispatchers.IO) {
+                    FakeCallScheduler.importCustomAudioFromUri(context, uri)
+                }
+                if (imported != null) {
+                    customAudioPath = imported.first
+                    customAudioName = imported.second
+                    useCustomAudio = true
+                    isPreviewingCustomAudio = false
+                    FakeCallScheduler.stopActiveVoice()
+                    Toast.makeText(
+                        context,
+                        "✅ Đã tải lên file âm thanh: ${imported.second}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "❌ Không thể đọc file âm thanh này. Hãy thử chọn file .mp3 khác!",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
 
     var selectedDelaySec by remember { mutableIntStateOf(60) } // Mặc định 1 phút (60s) theo yêu cầu
     var scheduledTargetMs by remember { mutableLongStateOf(prefs.getLong(FakeCallScheduler.KEY_SCHEDULED_AT, 0L)) }
@@ -1321,6 +1528,7 @@ fun FakeCallTool(onExit: () -> Unit) {
                     OutlinedButton(
                         onClick = {
                             if (voiceScript.isNotBlank()) {
+                                isPreviewingCustomAudio = false
                                 Toast.makeText(context, "🔊 Đang phát thử giọng đọc Tiếng Việt...", Toast.LENGTH_SHORT).show()
                                 FakeCallScheduler.playVietnameseVoiceScript(
                                     context = context,
@@ -1342,6 +1550,187 @@ fun FakeCallTool(onExit: () -> Unit) {
                         )
                     }
 
+                    // Chọn nguồn âm thanh: Giọng đọc TTS hoặc File MP3 tải lên
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "🎵 Nguồn âm thanh phát khi Nghe máy:",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.5.sp,
+                            color = AccentGreen
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = !useCustomAudio,
+                                onClick = {
+                                    useCustomAudio = false
+                                    prefs.edit().putBoolean(FakeCallScheduler.KEY_USE_CUSTOM_AUDIO, false).apply()
+                                },
+                                label = {
+                                    Text(
+                                        text = "🗣️ Giọng đọc TTS",
+                                        fontWeight = if (!useCustomAudio) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 12.sp,
+                                        maxLines = 1
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccentCyan,
+                                    selectedLabelColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = useCustomAudio,
+                                onClick = {
+                                    if (customAudioPath.isNotBlank() && File(customAudioPath).exists()) {
+                                        useCustomAudio = true
+                                        prefs.edit().putBoolean(FakeCallScheduler.KEY_USE_CUSTOM_AUDIO, true).apply()
+                                    } else {
+                                        audioPickerLauncher.launch(arrayOf("audio/*"))
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        text = "🎧 File MP3 / Ghi âm",
+                                        fontWeight = if (useCustomAudio) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 12.sp,
+                                        maxLines = 1
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccentGreen,
+                                    selectedLabelColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = { audioPickerLauncher.launch(arrayOf("audio/*")) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.UploadFile, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (customAudioPath.isNotBlank() && File(customAudioPath).exists()) {
+                                    "📂 Đổi file MP3 / Ghi âm khác"
+                                } else {
+                                    "📂 Tải lên file MP3 / Ghi âm cuộc gọi"
+                                },
+                                color = AccentGreen,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        if (customAudioPath.isNotBlank() && File(customAudioPath).exists()) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (useCustomAudio) {
+                                    AccentGreen.copy(alpha = 0.14f)
+                                } else {
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        1.dp,
+                                        if (useCustomAudio) AccentGreen.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.12f),
+                                        RoundedCornerShape(14.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = null,
+                                        tint = AccentGreen,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = customAudioName.ifBlank { "custom_call_audio.mp3" },
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = if (useCustomAudio) {
+                                                "Đang chọn phát file này khi nghe máy"
+                                            } else {
+                                                "Đã lưu • Chạm 'File MP3 / Ghi âm' để bật"
+                                            },
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (isPreviewingCustomAudio) {
+                                                FakeCallScheduler.stopActiveVoice()
+                                                isPreviewingCustomAudio = false
+                                            } else {
+                                                isPreviewingCustomAudio = FakeCallScheduler.playCustomAudioFile(
+                                                    context = context,
+                                                    audioPath = customAudioPath,
+                                                    useSpeaker = true,
+                                                    onCompletion = { isPreviewingCustomAudio = false }
+                                                )
+                                                if (!isPreviewingCustomAudio) {
+                                                    Toast.makeText(context, "Không thể phát file âm thanh này!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isPreviewingCustomAudio) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
+                                            contentDescription = if (isPreviewingCustomAudio) "Dừng" else "Nghe thử",
+                                            tint = AccentCyan
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (isPreviewingCustomAudio) {
+                                                FakeCallScheduler.stopActiveVoice()
+                                                isPreviewingCustomAudio = false
+                                            }
+                                            FakeCallScheduler.clearCustomAudio(context)
+                                            customAudioPath = ""
+                                            customAudioName = ""
+                                            useCustomAudio = false
+                                            Toast.makeText(context, "Đã xóa file MP3 đã tải lên", Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Delete,
+                                            contentDescription = "Xóa file",
+                                            tint = AccentRed
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1349,12 +1738,12 @@ fun FakeCallTool(onExit: () -> Unit) {
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "🗣️ Phát giọng nói từ đầu dây bên kia khi Nghe máy",
+                                text = "🗣️ Phát âm thanh từ đầu dây bên kia khi Nghe máy",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.5.sp
                             )
                             Text(
-                                text = "Khi bạn ấn Trả lời, điện thoại sẽ đọc câu thoại trên để người ngồi cạnh nghe thấy như có người gọi thật",
+                                text = "Khi bạn ấn Trả lời, điện thoại sẽ phát file MP3 đã tải lên (hoặc đọc câu thoại TTS) để người ngồi cạnh nghe thấy như có người gọi thật",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1439,7 +1828,8 @@ fun FakeCallTool(onExit: () -> Unit) {
                                     carrier = carrierLabel.ifBlank { "Viettel 5G" },
                                     avatarEmoji = avatarEmoji,
                                     voiceScript = voiceScript,
-                                    autoSpeakOnAnswer = autoSpeakOnAnswer
+                                    autoSpeakOnAnswer = autoSpeakOnAnswer,
+                                    useCustomAudio = useCustomAudio
                                 )
                                 scheduledTargetMs = System.currentTimeMillis() + selectedDelaySec * 1000L
                                 Toast.makeText(
@@ -1477,7 +1867,8 @@ fun FakeCallTool(onExit: () -> Unit) {
                                     carrier = carrierLabel.ifBlank { "Viettel 5G" },
                                     avatarEmoji = avatarEmoji,
                                     voiceScript = voiceScript,
-                                    autoSpeakOnAnswer = autoSpeakOnAnswer
+                                    autoSpeakOnAnswer = autoSpeakOnAnswer,
+                                    useCustomAudio = useCustomAudio
                                 )
                             },
                             shape = RoundedCornerShape(14.dp),
@@ -1540,8 +1931,10 @@ class FakeCallIncomingActivity : ComponentActivity() {
         val avatarEmoji = prefs.getString(FakeCallScheduler.KEY_AVATAR, "👔") ?: "👔"
         val voiceScript = prefs.getString(FakeCallScheduler.KEY_VOICE_SCRIPT, "") ?: ""
         val autoSpeak = prefs.getBoolean(FakeCallScheduler.KEY_AUTO_SPEAK, true)
+        val useCustomAudio = prefs.getBoolean(FakeCallScheduler.KEY_USE_CUSTOM_AUDIO, false)
+        val customAudioPath = prefs.getString(FakeCallScheduler.KEY_CUSTOM_AUDIO_PATH, "") ?: ""
 
-        if (voiceScript.isNotBlank()) {
+        if (!useCustomAudio && voiceScript.isNotBlank()) {
             FakeCallScheduler.preCacheVietnameseVoice(this, voiceScript)
         }
 
@@ -1565,19 +1958,27 @@ class FakeCallIncomingActivity : ComponentActivity() {
                     onAnswer = {
                         FakeCallScheduler.stopRingingAndVibration()
                         FakeCallScheduler.cancelCallNotifications(this)
-                        if (autoSpeak && voiceScript.isNotBlank()) {
-                            speakCallerScript(voiceScript, useSpeaker = false)
+                        if (autoSpeak) {
+                            playConfiguredAudio(
+                                script = voiceScript,
+                                useCustomAudio = useCustomAudio,
+                                customAudioPath = customAudioPath,
+                                useSpeaker = false
+                            )
                         }
                     },
                     onToggleSpeaker = { speakerOn ->
-                        if (voiceScript.isNotBlank()) {
+                        if (!FakeCallScheduler.updateActiveVoiceVolume(speakerOn) && !useCustomAudio && voiceScript.isNotBlank()) {
                             speakCallerScript(voiceScript, useSpeaker = speakerOn)
                         }
                     },
                     onReplayVoice = { speakerOn ->
-                        if (voiceScript.isNotBlank()) {
-                            speakCallerScript(voiceScript, useSpeaker = speakerOn)
-                        }
+                        playConfiguredAudio(
+                            script = voiceScript,
+                            useCustomAudio = useCustomAudio,
+                            customAudioPath = customAudioPath,
+                            useSpeaker = speakerOn
+                        )
                     },
                     onEndCall = {
                         FakeCallScheduler.endActiveFakeCall(this)
@@ -1592,6 +1993,22 @@ class FakeCallIncomingActivity : ComponentActivity() {
         super.onResume()
         // Nếu Activity đã hiển thị lên tiền cảnh thành công, ẩn lớp phủ Overlay để không hiển thị 2 lớp trùng nhau
         FakeCallScheduler.dismissOverlayWindowOnly()
+    }
+
+    private fun playConfiguredAudio(
+        script: String,
+        useCustomAudio: Boolean,
+        customAudioPath: String,
+        useSpeaker: Boolean
+    ) {
+        FakeCallScheduler.playConfiguredCallAudio(
+            context = this,
+            script = script,
+            useCustomAudio = useCustomAudio,
+            customAudioPath = customAudioPath,
+            useSpeaker = useSpeaker,
+            fallbackTts = if (ttsReady) tts else null
+        )
     }
 
     private fun speakCallerScript(script: String, useSpeaker: Boolean) {
