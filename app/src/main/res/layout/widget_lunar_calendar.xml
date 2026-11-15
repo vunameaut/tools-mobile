@@ -103,6 +103,7 @@
         android:paddingBottom="3dp">
 
         <TextView
+            android:id="@+id/widget_lunar_dow_0"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -114,6 +115,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_1"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -125,6 +127,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_2"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -136,6 +139,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_3"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -147,6 +151,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_4"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -158,6 +163,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_5"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -169,6 +175,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/widget_lunar_dow_6"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"

@@ -10,6 +10,7 @@ import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.util.TypedValue
 import android.widget.RemoteViews
 import android.widget.Toast
 import com.vunameaut.powertimer.MainActivity
@@ -265,6 +266,76 @@ class VietQrAppWidgetProvider : AppWidgetProvider() {
 }
 
 /**
+ * Phong cách màu sắc Widget phù hợp cho nhiều lứa tuổi & sở thích.
+ */
+enum class LunarWidgetStyle(
+    val key: String,
+    val label: String,
+    val audienceHint: String
+) {
+    DARK("dark", "Tối Hiện Đại", "Giới trẻ / Dễ nhìn ban đêm"),
+    GLASS("glass", "Kính Mờ", "Tối giản / Hợp mọi hình nền"),
+    LIGHT("light", "Sáng Rõ Nét", "Trung niên / Văn phòng"),
+    BLOC("bloc", "Lịch Bloc Đỏ", "Người lớn tuổi / Truyền thống");
+
+    companion object {
+        fun fromKey(key: String?): LunarWidgetStyle =
+            entries.firstOrNull { it.key == key } ?: DARK
+    }
+}
+
+/**
+ * Mức cỡ chữ trên Widget Lịch Âm (điều chỉnh độc lập cho từng lứa tuổi).
+ */
+enum class LunarWidgetFontSize(
+    val key: String,
+    val label: String,
+    val scale: Float
+) {
+    SMALL("small", "Nhỏ", 0.88f),
+    MEDIUM("medium", "Vừa", 1.0f),
+    LARGE("large", "Lớn", 1.18f),
+    EXTRA_LARGE("xlarge", "Cực Lớn", 1.36f);
+
+    companion object {
+        fun fromKey(key: String?): LunarWidgetFontSize =
+            entries.firstOrNull { it.key == key } ?: MEDIUM
+    }
+}
+
+object LunarWidgetPrefs {
+    private const val PREF_NAME = "lunar_widget_appearance_prefs"
+    private const val KEY_STYLE = "widget_style"
+    private const val KEY_FONT_SIZE = "widget_font_size"
+
+    fun getStyle(context: Context): LunarWidgetStyle {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return LunarWidgetStyle.fromKey(prefs.getString(KEY_STYLE, LunarWidgetStyle.DARK.key))
+    }
+
+    fun setStyle(context: Context, style: LunarWidgetStyle) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_STYLE, style.key)
+            .apply()
+        LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+    }
+
+    fun getFontSize(context: Context): LunarWidgetFontSize {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return LunarWidgetFontSize.fromKey(prefs.getString(KEY_FONT_SIZE, LunarWidgetFontSize.MEDIUM.key))
+    }
+
+    fun setFontSize(context: Context, fontSize: LunarWidgetFontSize) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_FONT_SIZE, fontSize.key)
+            .apply()
+        LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+    }
+}
+
+/**
  * Tiện ích (AppWidget) Lịch Âm - Dương Tháng ngoài Màn hình chính (tương tác chuyển tháng giống Google Calendar).
  */
 class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
@@ -286,6 +357,16 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             R.id.lunar_0, R.id.lunar_1, R.id.lunar_2, R.id.lunar_3, R.id.lunar_4, R.id.lunar_5, R.id.lunar_6
         )
 
+        private val DOW_IDS = intArrayOf(
+            R.id.widget_lunar_dow_0,
+            R.id.widget_lunar_dow_1,
+            R.id.widget_lunar_dow_2,
+            R.id.widget_lunar_dow_3,
+            R.id.widget_lunar_dow_4,
+            R.id.widget_lunar_dow_5,
+            R.id.widget_lunar_dow_6
+        )
+
         internal fun updateSingleLunarWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
@@ -293,6 +374,9 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
         ) {
             val prefs = context.getSharedPreferences(PREF_WIDGET, Context.MODE_PRIVATE)
             val monthOffset = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+            val style = LunarWidgetPrefs.getStyle(context)
+            val s = LunarWidgetPrefs.getFontSize(context).scale
+            val isLightBg = (style == LunarWidgetStyle.LIGHT || style == LunarWidgetStyle.BLOC)
 
             val todayCal = Calendar.getInstance()
             val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
@@ -309,6 +393,59 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             val midMonthLunar = VietnameseLunarCalendar.getFullDayInfo(15, viewMonth, viewYear)
 
             val views = RemoteViews(context.packageName, R.layout.widget_lunar_calendar)
+
+            // Áp dụng nền & màu chữ theo Phong cách (Theme) đã chọn
+            val cardBgRes = when (style) {
+                LunarWidgetStyle.DARK -> R.drawable.widget_lunar_card_bg
+                LunarWidgetStyle.GLASS -> R.drawable.widget_lunar_card_glass
+                LunarWidgetStyle.LIGHT -> R.drawable.widget_lunar_card_light
+                LunarWidgetStyle.BLOC -> R.drawable.widget_lunar_card_bloc
+            }
+            views.setInt(R.id.widget_lunar_root, "setBackgroundResource", cardBgRes)
+            views.setInt(
+                R.id.widget_lunar_footer_box,
+                "setBackgroundResource",
+                if (isLightBg) R.drawable.widget_footer_pill_light_bg else R.drawable.widget_footer_pill_bg
+            )
+            val btnBgRes = if (isLightBg) R.drawable.widget_btn_light_bg else R.drawable.widget_btn_bg
+            views.setInt(R.id.widget_lunar_btn_prev, "setBackgroundResource", btnBgRes)
+            views.setInt(R.id.widget_lunar_btn_today, "setBackgroundResource", btnBgRes)
+            views.setInt(R.id.widget_lunar_btn_next, "setBackgroundResource", btnBgRes)
+
+            val titleColor = when (style) {
+                LunarWidgetStyle.BLOC -> 0xFFDC2626.toInt()
+                LunarWidgetStyle.LIGHT -> 0xFF0F172A.toInt()
+                else -> 0xFFF8FAFC.toInt()
+            }
+            val subColor = when (style) {
+                LunarWidgetStyle.BLOC -> 0xFFB45309.toInt()
+                LunarWidgetStyle.LIGHT -> 0xFF0284C7.toInt()
+                else -> 0xFF38BDF8.toInt()
+            }
+            val btnTextColor = if (isLightBg) 0xFF0F172A.toInt() else 0xFFF8FAFC.toInt()
+            val todayBtnColor = if (isLightBg) 0xFF15803D.toInt() else 0xFF4ADE80.toInt()
+
+            views.setTextColor(R.id.widget_lunar_month_title, titleColor)
+            views.setTextColor(R.id.widget_lunar_today_subtitle, subColor)
+            views.setTextColor(R.id.widget_lunar_btn_prev, btnTextColor)
+            views.setTextColor(R.id.widget_lunar_btn_next, btnTextColor)
+            views.setTextColor(R.id.widget_lunar_btn_today, todayBtnColor)
+
+            // Áp dụng cỡ chữ động (Font Size Scale)
+            views.setTextViewTextSize(R.id.widget_lunar_month_title, TypedValue.COMPLEX_UNIT_SP, 13.5f * s)
+            views.setTextViewTextSize(R.id.widget_lunar_today_subtitle, TypedValue.COMPLEX_UNIT_SP, 10.5f * s)
+            views.setTextViewTextSize(R.id.widget_lunar_btn_today, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+
+            DOW_IDS.forEachIndexed { col, dowId ->
+                views.setTextViewTextSize(dowId, TypedValue.COMPLEX_UNIT_SP, 10.5f * s)
+                val dowColor = when (col) {
+                    6 -> if (isLightBg) 0xFFDC2626.toInt() else 0xFFFB7185.toInt()
+                    5 -> if (isLightBg) 0xFF0284C7.toInt() else 0xFF38BDF8.toInt()
+                    else -> if (isLightBg) 0xFF475569.toInt() else 0xFF94A3B8.toInt()
+                }
+                views.setTextColor(dowId, dowColor)
+            }
+
             views.setTextViewText(
                 R.id.widget_lunar_month_title,
                 "🗓️ Tháng $viewMonth / $viewYear • Năm ${midMonthLunar.yearCanChi}"
@@ -378,19 +515,21 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
 
                         val solarColor = when {
                             isToday -> 0xFFFFFFFF.toInt()
-                            col == 6 -> 0xFFFB7185.toInt() // Chủ nhật đỏ tươi
-                            col == 5 -> 0xFF38BDF8.toInt() // Thứ 7 xanh sáng
-                            isMung1OrRam -> 0xFFFDE68A.toInt() // Mùng 1 / Rằm vàng sáng
-                            else -> 0xFFF8FAFC.toInt() // Ngày thường trắng tinh sắc nét
+                            col == 6 -> if (isLightBg) 0xFFDC2626.toInt() else 0xFFFB7185.toInt()
+                            col == 5 -> if (isLightBg) 0xFF0284C7.toInt() else 0xFF38BDF8.toInt()
+                            isMung1OrRam -> if (isLightBg) 0xFFB45309.toInt() else 0xFFFDE68A.toInt()
+                            else -> if (isLightBg) 0xFF0F172A.toInt() else 0xFFF8FAFC.toInt()
                         }
                         val lunarColor = when {
-                            isToday -> 0xFFFEF08A.toInt() // Âm lịch hôm nay vàng sáng
-                            isMung1OrRam -> 0xFFFBBF24.toInt() // Mùng 1 / Rằm vàng cam đậm
-                            info.isHoangDaoDay -> 0xFF86EFAC.toInt() // Ngày Hoàng Đạo xanh ngọc dịu
-                            else -> 0xFFCBD5E1.toInt() // Ngày thường bạc sáng rõ nét
+                            isToday -> 0xFFFEF08A.toInt()
+                            isMung1OrRam -> if (isLightBg) 0xFFD97706.toInt() else 0xFFFBBF24.toInt()
+                            info.isHoangDaoDay -> if (isLightBg) 0xFF15803D.toInt() else 0xFF86EFAC.toInt()
+                            else -> if (isLightBg) 0xFF475569.toInt() else 0xFFCBD5E1.toInt()
                         }
                         rowViews.setTextColor(solarId, solarColor)
                         rowViews.setTextColor(lunarId, lunarColor)
+                        rowViews.setTextViewTextSize(solarId, TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
+                        rowViews.setTextViewTextSize(lunarId, TypedValue.COMPLEX_UNIT_SP, 8.6f * s)
                         rowViews.setOnClickPendingIntent(cellId, openLunarToolPi)
                     } else {
                         rowViews.setTextViewText(solarId, "")
@@ -410,6 +549,16 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 R.id.widget_lunar_footer_hours,
                 "✨ Giờ tốt: " + todayInfo.auspiciousHours.take(4).joinToString(", ")
             )
+            views.setTextColor(
+                R.id.widget_lunar_footer_canchi,
+                if (isLightBg) 0xFF15803D.toInt() else 0xFF4ADE80.toInt()
+            )
+            views.setTextColor(
+                R.id.widget_lunar_footer_hours,
+                if (isLightBg) 0xFF334155.toInt() else 0xFFE2E8F0.toInt()
+            )
+            views.setTextViewTextSize(R.id.widget_lunar_footer_canchi, TypedValue.COMPLEX_UNIT_SP, 10.5f * s)
+            views.setTextViewTextSize(R.id.widget_lunar_footer_hours, TypedValue.COMPLEX_UNIT_SP, 9.8f * s)
 
             // Nút Tháng trước (◀)
             val prevIntent = Intent(context, LunarCalendarAppWidgetProvider::class.java).apply {
@@ -467,6 +616,10 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             val manager = AppWidgetManager.getInstance(appCtx)
             val ids = manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java))
             ids.forEach { id -> updateSingleLunarWidget(appCtx, manager, id) }
+            val blocIds = manager.getAppWidgetIds(ComponentName(appCtx, LunarDayBlocAppWidgetProvider::class.java))
+            blocIds.forEach { id -> LunarDayBlocAppWidgetProvider.updateSingleBlocWidget(appCtx, manager, id) }
+            val stripIds = manager.getAppWidgetIds(ComponentName(appCtx, LunarCompactStripAppWidgetProvider::class.java))
+            stripIds.forEach { id -> LunarCompactStripAppWidgetProvider.updateSingleStripWidget(appCtx, manager, id) }
             updateDynamicLunarShortcutIfPinned(appCtx)
         }
 
@@ -474,7 +627,9 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             return runCatching {
                 val appCtx = context.applicationContext
                 val manager = AppWidgetManager.getInstance(appCtx)
-                manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java)).size
+                manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java)).size +
+                    manager.getAppWidgetIds(ComponentName(appCtx, LunarDayBlocAppWidgetProvider::class.java)).size +
+                    manager.getAppWidgetIds(ComponentName(appCtx, LunarCompactStripAppWidgetProvider::class.java)).size
             }.getOrDefault(0)
         }
 
@@ -613,6 +768,188 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             Intent.ACTION_TIMEZONE_CHANGED -> {
                 prefs.edit().putInt(KEY_OFFSET_MONTHS, 0).apply()
                 refreshAllLunarWidgets(context)
+            }
+        }
+    }
+}
+
+/**
+ * Kiểu Widget 2: Tờ Lịch Bloc Hôm Nay (2x2 - Chữ Cực To Rõ Ràng cho Người Lớn Tuổi / Bố Mẹ).
+ */
+class LunarDayBlocAppWidgetProvider : AppWidgetProvider() {
+
+    companion object {
+        internal fun updateSingleBlocWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int
+        ) {
+            val style = LunarWidgetPrefs.getStyle(context)
+            val s = LunarWidgetPrefs.getFontSize(context).scale
+            val isLightBg = (style == LunarWidgetStyle.LIGHT || style == LunarWidgetStyle.BLOC)
+
+            val todayCal = Calendar.getInstance()
+            val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+            val todayMonth = todayCal.get(Calendar.MONTH) + 1
+            val todayYear = todayCal.get(Calendar.YEAR)
+            val info = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+
+            val views = RemoteViews(context.packageName, R.layout.widget_lunar_bloc_day)
+
+            val bgRes = when (style) {
+                LunarWidgetStyle.DARK -> R.drawable.widget_lunar_card_bg
+                LunarWidgetStyle.GLASS -> R.drawable.widget_lunar_card_glass
+                LunarWidgetStyle.LIGHT -> R.drawable.widget_lunar_card_light
+                LunarWidgetStyle.BLOC -> R.drawable.widget_lunar_card_bloc
+            }
+            views.setInt(R.id.widget_bloc_root, "setBackgroundResource", bgRes)
+
+            val topColor = when (style) {
+                LunarWidgetStyle.BLOC -> 0xFFDC2626.toInt()
+                LunarWidgetStyle.LIGHT -> 0xFF0284C7.toInt()
+                else -> 0xFF38BDF8.toInt()
+            }
+            val dayColor = if (isLightBg) 0xFF0F172A.toInt() else 0xFFFFFFFF.toInt()
+            val lunarColor = if (isLightBg) 0xFFB45309.toInt() else 0xFFFBBF24.toInt()
+            val canChiColor = if (isLightBg) 0xFF15803D.toInt() else 0xFF4ADE80.toInt()
+            val hoursColor = if (isLightBg) 0xFF475569.toInt() else 0xFFCBD5E1.toInt()
+
+            views.setTextColor(R.id.widget_bloc_top_header, topColor)
+            views.setTextColor(R.id.widget_bloc_solar_day, dayColor)
+            views.setTextColor(R.id.widget_bloc_lunar_date, lunarColor)
+            views.setTextColor(R.id.widget_bloc_canchi, canChiColor)
+            views.setTextColor(R.id.widget_bloc_good_hours, hoursColor)
+
+            views.setTextViewTextSize(R.id.widget_bloc_top_header, TypedValue.COMPLEX_UNIT_SP, 11.5f * s)
+            views.setTextViewTextSize(R.id.widget_bloc_solar_day, TypedValue.COMPLEX_UNIT_SP, 44f * s)
+            views.setTextViewTextSize(R.id.widget_bloc_lunar_date, TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
+            views.setTextViewTextSize(R.id.widget_bloc_canchi, TypedValue.COMPLEX_UNIT_SP, 11f * s)
+            views.setTextViewTextSize(R.id.widget_bloc_good_hours, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+
+            views.setTextViewText(
+                R.id.widget_bloc_top_header,
+                "${info.dayOfWeekLabel.uppercase()} • THÁNG $todayMonth/$todayYear"
+            )
+            views.setTextViewText(R.id.widget_bloc_solar_day, String.format("%02d", todayDay))
+            views.setTextViewText(
+                R.id.widget_bloc_lunar_date,
+                String.format("Âm lịch: %02d/%02d (%s)", info.lunarDay, info.lunarMonth, info.monthCanChi)
+            )
+            views.setTextViewText(
+                R.id.widget_bloc_canchi,
+                "${info.zodiacAnimalEmoji} Ngày ${info.dayCanChi} • ${if (info.isHoangDaoDay) "Hoàng Đạo" else info.starName}"
+            )
+            views.setTextViewText(
+                R.id.widget_bloc_good_hours,
+                "Giờ tốt: " + info.auspiciousHours.take(3).joinToString(", ")
+            )
+
+            val openPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(context, 3101, "lunar_calendar")
+            views.setOnClickPendingIntent(R.id.widget_bloc_root, openPi)
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+    }
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        appWidgetIds.forEach { id -> updateSingleBlocWidget(context, appWidgetManager, id) }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        when (intent.action) {
+            Intent.ACTION_DATE_CHANGED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+            }
+        }
+    }
+}
+
+/**
+ * Kiểu Widget 3: Thanh Lịch Âm Hôm Nay Gọn (4x1 - Tối giản cho Dân Văn Phòng / Giới Trẻ).
+ */
+class LunarCompactStripAppWidgetProvider : AppWidgetProvider() {
+
+    companion object {
+        internal fun updateSingleStripWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int
+        ) {
+            val style = LunarWidgetPrefs.getStyle(context)
+            val s = LunarWidgetPrefs.getFontSize(context).scale
+            val isLightBg = (style == LunarWidgetStyle.LIGHT || style == LunarWidgetStyle.BLOC)
+
+            val todayCal = Calendar.getInstance()
+            val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+            val todayMonth = todayCal.get(Calendar.MONTH) + 1
+            val todayYear = todayCal.get(Calendar.YEAR)
+            val info = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+
+            val views = RemoteViews(context.packageName, R.layout.widget_lunar_compact_strip)
+
+            val bgRes = when (style) {
+                LunarWidgetStyle.DARK -> R.drawable.widget_lunar_card_bg
+                LunarWidgetStyle.GLASS -> R.drawable.widget_lunar_card_glass
+                LunarWidgetStyle.LIGHT -> R.drawable.widget_lunar_card_light
+                LunarWidgetStyle.BLOC -> R.drawable.widget_lunar_card_bloc
+            }
+            views.setInt(R.id.widget_compact_root, "setBackgroundResource", bgRes)
+
+            val lunarColor = if (isLightBg) 0xFFB45309.toInt() else 0xFFFBBF24.toInt()
+            val canChiColor = if (isLightBg) 0xFF15803D.toInt() else 0xFF4ADE80.toInt()
+            val hoursColor = if (isLightBg) 0xFF334155.toInt() else 0xFFCBD5E1.toInt()
+
+            views.setTextColor(R.id.widget_compact_lunar_title, lunarColor)
+            views.setTextColor(R.id.widget_compact_canchi, canChiColor)
+            views.setTextColor(R.id.widget_compact_hours, hoursColor)
+
+            views.setTextViewTextSize(R.id.widget_compact_dow, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+            views.setTextViewTextSize(R.id.widget_compact_solar_day, TypedValue.COMPLEX_UNIT_SP, 22f * s)
+            views.setTextViewTextSize(R.id.widget_compact_lunar_title, TypedValue.COMPLEX_UNIT_SP, 13f * s)
+            views.setTextViewTextSize(R.id.widget_compact_canchi, TypedValue.COMPLEX_UNIT_SP, 11f * s)
+            views.setTextViewTextSize(R.id.widget_compact_hours, TypedValue.COMPLEX_UNIT_SP, 10.5f * s)
+
+            val shortDow = when (todayCal.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.SUNDAY -> "CN"
+                Calendar.MONDAY -> "T2"
+                Calendar.TUESDAY -> "T3"
+                Calendar.WEDNESDAY -> "T4"
+                Calendar.THURSDAY -> "T5"
+                Calendar.FRIDAY -> "T6"
+                else -> "T7"
+            }
+            views.setTextViewText(R.id.widget_compact_dow, shortDow)
+            views.setTextViewText(R.id.widget_compact_solar_day, String.format("%02d", todayDay))
+            views.setTextViewText(
+                R.id.widget_compact_lunar_title,
+                String.format("Âm lịch: %02d/%02d • Tháng %d/%d", info.lunarDay, info.lunarMonth, todayMonth, todayYear)
+            )
+            views.setTextViewText(
+                R.id.widget_compact_canchi,
+                "${info.zodiacAnimalEmoji} Ngày ${info.dayCanChi} • Năm ${info.yearCanChi} (${if (info.isHoangDaoDay) "Hoàng Đạo" else info.starName})"
+            )
+            views.setTextViewText(
+                R.id.widget_compact_hours,
+                "✨ Giờ tốt: " + info.auspiciousHours.take(3).joinToString(", ")
+            )
+
+            val openPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(context, 3201, "lunar_calendar")
+            views.setOnClickPendingIntent(R.id.widget_compact_root, openPi)
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+    }
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        appWidgetIds.forEach { id -> updateSingleStripWidget(context, appWidgetManager, id) }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        when (intent.action) {
+            Intent.ACTION_DATE_CHANGED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
             }
         }
     }

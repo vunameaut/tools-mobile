@@ -251,7 +251,7 @@
 
         <receiver
             android:name=".widget.LunarCalendarAppWidgetProvider"
-            android:label="Lịch Âm Vạn Niên"
+            android:label="Lịch Âm Vạn Niên (Bảng Tháng)"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -265,6 +265,36 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_lunar_calendar_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LunarDayBlocAppWidgetProvider"
+            android:label="Tờ Lịch Bloc Hôm Nay (Chữ To)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lunar_bloc_day_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LunarCompactStripAppWidgetProvider"
+            android:label="Lịch Âm Hôm Nay (Thanh Gọn 4x1)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lunar_compact_strip_info" />
         </receiver>
 
     </application>

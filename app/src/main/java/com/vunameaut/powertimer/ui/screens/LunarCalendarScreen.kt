@@ -87,6 +87,11 @@ import com.vunameaut.powertimer.ui.theme.AccentPink
 import com.vunameaut.powertimer.ui.theme.AccentPurple
 import com.vunameaut.powertimer.ui.theme.AccentRed
 import com.vunameaut.powertimer.widget.LunarCalendarAppWidgetProvider
+import com.vunameaut.powertimer.widget.LunarCompactStripAppWidgetProvider
+import com.vunameaut.powertimer.widget.LunarDayBlocAppWidgetProvider
+import com.vunameaut.powertimer.widget.LunarWidgetFontSize
+import com.vunameaut.powertimer.widget.LunarWidgetPrefs
+import com.vunameaut.powertimer.widget.LunarWidgetStyle
 import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
 import java.util.Calendar
 import kotlin.math.PI
@@ -750,6 +755,12 @@ fun LunarCalendarTool(onExit: () -> Unit) {
     var isShortcutPinned by remember {
         mutableStateOf(LunarCalendarAppWidgetProvider.isLunarShortcutPinned(context))
     }
+    var widgetStyle by remember {
+        mutableStateOf(LunarWidgetPrefs.getStyle(context))
+    }
+    var widgetFontSize by remember {
+        mutableStateOf(LunarWidgetPrefs.getFontSize(context))
+    }
     val isPinnedOnHome = activeWidgetCount > 0 || isShortcutPinned
 
     LaunchedEffect(Unit) {
@@ -899,6 +910,192 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.5.sp
                         )
+                    }
+                }
+            }
+
+            // 1B. Tuỳ Chỉnh Kiểu Dáng Widget Cho Nhiều Lứa Tuổi & Cỡ Chữ
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, AccentPurple.copy(alpha = 0.32f), RoundedCornerShape(20.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = "Tuỳ chỉnh Kiểu Widget & Cỡ Chữ (Mọi lứa tuổi)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.5.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    // Chọn 4 phong cách màu sắc Widget
+                    Text(
+                        text = "1. Phong cách màu sắc Widget (${widgetStyle.audienceHint}):",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        LunarWidgetStyle.entries.forEach { styleItem ->
+                            val selected = (widgetStyle == styleItem)
+                            val dotColor = when (styleItem) {
+                                LunarWidgetStyle.DARK -> Color(0xFF0F172A)
+                                LunarWidgetStyle.GLASS -> Color(0xFF64748B)
+                                LunarWidgetStyle.LIGHT -> Color(0xFFF8FAFC)
+                                LunarWidgetStyle.BLOC -> Color(0xFFDC2626)
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selected) AccentCyan.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier
+                                    .border(
+                                        width = if (selected) 1.5.dp else 1.dp,
+                                        color = if (selected) AccentCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        widgetStyle = styleItem
+                                        LunarWidgetPrefs.setStyle(context, styleItem)
+                                        Toast.makeText(
+                                            context,
+                                            "Đã đổi Widget sang kiểu: ${styleItem.label}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(dotColor)
+                                            .border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape)
+                                    )
+                                    Text(
+                                        text = styleItem.label,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        color = if (selected) AccentCyan else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Chọn 4 mức Cỡ Chữ
+                    Text(
+                        text = "2. Cỡ chữ hiển thị trên Widget:",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        LunarWidgetFontSize.entries.forEach { sizeItem ->
+                            val selected = (widgetFontSize == sizeItem)
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selected) AccentGreen.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .border(
+                                        width = if (selected) 1.5.dp else 1.dp,
+                                        color = if (selected) AccentGreen else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        widgetFontSize = sizeItem
+                                        LunarWidgetPrefs.setFontSize(context, sizeItem)
+                                        Toast.makeText(
+                                            context,
+                                            "Đã chỉnh cỡ chữ Widget: ${sizeItem.label}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                            ) {
+                                Text(
+                                    text = sizeItem.label,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    color = if (selected) AccentGreen else MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 4.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // 3 kiểu kích thước Widget cho từng nhu cầu
+                    Text(
+                        text = "3. Các mẫu Widget có sẵn (Chạm để ghim hoặc kéo từ mục Tiện ích):",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                                    context,
+                                    LunarCalendarAppWidgetProvider::class.java,
+                                    "Lịch Âm Vạn Niên (Bảng Tháng)"
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("🗓️ Bảng Tháng\n(4x2)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                                    context,
+                                    LunarDayBlocAppWidgetProvider::class.java,
+                                    "Tờ Lịch Bloc Hôm Nay (Chữ To)"
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("🧧 Lịch Bloc\n(2x2 Chữ To)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentAmber, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                                    context,
+                                    LunarCompactStripAppWidgetProvider::class.java,
+                                    "Lịch Âm Hôm Nay (Thanh Gọn 4x1)"
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("📏 Thanh Gọn\n(4x1)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

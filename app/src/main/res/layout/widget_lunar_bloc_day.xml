@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_bloc_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_lunar_card_bloc"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <!-- Dòng Thứ + Tháng Dương -->
+    <TextView
+        android:id="@+id/widget_bloc_top_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="CHỦ NHẬT • THÁNG 11/2026"
+        android:textColor="#DC2626"
+        android:textSize="11.5sp"
+        android:textStyle="bold" />
+
+    <!-- Số Ngày Dương Cực Đại (Dễ nhìn cho người lớn tuổi) -->
+    <TextView
+        android:id="@+id/widget_bloc_solar_day"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="15"
+        android:textColor="#0F172A"
+        android:textSize="44sp"
+        android:textStyle="bold" />
+
+    <!-- Ngày Âm lịch nổi bật -->
+    <TextView
+        android:id="@+id/widget_bloc_lunar_date"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="Âm lịch: 07/10 (Tháng Kỷ Hợi)"
+        android:textColor="#B45309"
+        android:textSize="12.5sp"
+        android:textStyle="bold" />
+
+    <!-- Can Chi + Trạng thái Hoàng Đạo -->
+    <TextView
+        android:id="@+id/widget_bloc_canchi"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="🐍 Ngày Quý Tỵ • Hoàng Đạo"
+        android:textColor="#15803D"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+    <!-- Giờ Tốt -->
+    <TextView
+        android:id="@+id/widget_bloc_good_hours"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:text="Giờ tốt: Sửu, Thìn, Ngọ, Mùi"
+        android:textColor="#475569"
+        android:textSize="10sp" />
+
+</LinearLayout>
+
