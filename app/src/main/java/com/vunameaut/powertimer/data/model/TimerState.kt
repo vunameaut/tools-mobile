@@ -8,7 +8,7 @@ data class TimerState(
     val selectedMode: ShutdownMode = ShutdownMode.BANK_SAFE_SLEEP,
     val fadeAudio: Boolean = true,
     val playWarningSound: Boolean = true,
-    val turnOnDnd: Boolean = true,
+    val turnOnDnd: Boolean = false,
     val shakeToExtend: Boolean = true
 ) {
     val progress: Float

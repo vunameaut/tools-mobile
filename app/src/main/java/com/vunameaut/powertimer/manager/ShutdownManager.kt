@@ -3,15 +3,14 @@ package com.vunameaut.powertimer.manager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.os.PowerManager
 import android.util.Log
-import android.widget.Toast
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.receiver.DeviceAdminSampleReceiver
 import com.vunameaut.powertimer.service.PowerAccessibilityService
 import com.vunameaut.powertimer.ui.screens.BlackoutSleepActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class ShutdownManager(private val context: Context) {
@@ -28,24 +27,32 @@ class ShutdownManager(private val context: Context) {
     suspend fun executeShutdown(
         mode: ShutdownMode,
         fadeAudio: Boolean = true,
-        enableDnd: Boolean = true
+        enableDnd: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
         Log.i(TAG, "Executing screen off sequence with mode: $mode")
 
-        // 1. Giảm âm lượng từ từ (Fade-out)
-        if (fadeAudio) {
-            audioMediaManager.fadeOutVolume(5000L)
-        }
+        // Kiểm tra xem màn hình hiện tại đang sáng hay đã tắt sẵn từ trước
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val isScreenCurrentlyOn = pm?.isInteractive ?: true
 
-        // 2. Dừng phát toàn bộ nhạc / video / podcast
-        audioMediaManager.pauseAllMedia()
+        // 1 & 2. Giảm âm lượng êm ái (chỉ khi màn hình đang sáng), dừng phát nhạc/video, nhả AudioFocus và khôi phục lại mức âm lượng ban đầu
+        audioMediaManager.fadeOutAndPauseMedia(fadeAudio = fadeAudio && isScreenCurrentlyOn)
 
-        // 3. Kích hoạt chế độ Không làm phiền (Do Not Disturb) nếu được chọn
+        // 3. Xử lý chế độ Không làm phiền (Mặc định tắt để không bao giờ làm lỡ cuộc gọi / báo thức sáng hôm sau)
         if (enableDnd) {
             audioMediaManager.enableDoNotDisturb()
+        } else {
+            AudioMediaManager.restoreNormalRingerIfModified(context)
         }
 
-        // 4. Thực hiện tắt / khóa màn hình theo chế độ
+        // Nếu màn hình ĐÃ TẮT SẴN (ví dụ hết video YouTube và máy đã tự tắt màn hình từ trước),
+        // không cần mở BlackoutSleepActivity làm sáng màn hình lại giữa đêm!
+        if (!isScreenCurrentlyOn) {
+            Log.i(TAG, "Screen is already off (non-interactive). Skipping screen blackout launch.")
+            return@withContext true
+        }
+
+        // 4. Thực hiện tắt / khóa màn hình theo chế độ khi màn hình đang sáng
         return@withContext when (mode) {
             ShutdownMode.BANK_SAFE_SLEEP -> executeBankSafeSleep()
             ShutdownMode.DEVICE_ADMIN -> executeDeviceAdminLock()
@@ -64,7 +71,6 @@ class ShutdownManager(private val context: Context) {
      */
     private suspend fun executeBankSafeSleep(): Boolean = withContext(Dispatchers.Main) {
         try {
-            // Đảm bảo tắt/ẩn Trợ năng nếu trước đó từng bật để không làm ảnh hưởng App Ngân hàng
             PowerAccessibilityService.disableAndHideForBanking(context)
             BlackoutSleepActivity.launch(context)
             true
@@ -83,7 +89,6 @@ class ShutdownManager(private val context: Context) {
             return true
         }
 
-        // Nếu Trợ năng chưa bật, tự động chuyển sang phương thức Chuẩn Ngân Hàng (BankSafeSleep / DeviceAdmin)
         if (executeDeviceAdminLock(allowFallback = false)) {
             return true
         }
@@ -117,11 +122,5 @@ class ShutdownManager(private val context: Context) {
             return executeBankSafeSleep()
         }
         return false
-    }
-
-    private fun showToastOnMain(message: String) {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-        }
     }
 }

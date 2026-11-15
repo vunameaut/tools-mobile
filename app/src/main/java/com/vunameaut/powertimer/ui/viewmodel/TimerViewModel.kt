@@ -35,7 +35,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     private val _fadeAudio = MutableStateFlow(true)
     val fadeAudio: StateFlow<Boolean> = _fadeAudio.asStateFlow()
 
-    private val _enableDnd = MutableStateFlow(true)
+    // Mặc định TẮT Không làm phiền (DND) để không bao giờ làm lỡ cuộc gọi / báo thức vào sáng hôm sau
+    private val _enableDnd = MutableStateFlow(false)
     val enableDnd: StateFlow<Boolean> = _enableDnd.asStateFlow()
 
     private val _playWarningSound = MutableStateFlow(true)

@@ -56,8 +56,11 @@ object NativeMediaIslandBridge {
             return
         }
 
-        ensureSilentMediaStreamRunning()
+        val isNewSession = (mediaSession == null)
         val session = ensureMediaSession(appCtx)
+        if (isNewSession) {
+            pulseSilentMediaInitOnce()
+        }
 
         val style = SystemDynamicIslandManager.getStyle(appCtx)
         val formatted = formatTime(remainingSeconds)
@@ -187,49 +190,46 @@ object NativeMediaIslandBridge {
     }
 
     /**
-     * Phát luồng PCM siêu tĩnh (MODE_STATIC lặp vô hạn trong phần cứng, 0% CPU, không chiếm AudioFocus)
-     * để SystemUI (Fluid Cloud / Atomic Island / HyperIsland) nhận diện ứng dụng đang phát Media giống YouTube.
+     * Chỉ phát 1 xung âm thanh tĩnh cực ngắn (120ms) duy nhất lúc mới khởi tạo MediaSession rồi GIẢI PHÓNG NGAY,
+     * tuyệt đối KHÔNG giữ AudioTrack chạy lặp vô hạn để không bao giờ chiếm quyền nút Tăng/Giảm Âm lượng của máy
+     * hoặc làm ẩn thanh âm lượng Chuông cuộc gọi / Báo thức trên OriginOS & HyperOS.
      */
-    private fun ensureSilentMediaStreamRunning() {
-        val current = silentAudioTrack
-        if (current != null && current.state == AudioTrack.STATE_INITIALIZED &&
-            current.playState == AudioTrack.PLAYSTATE_PLAYING
-        ) {
-            return
-        }
+    private fun pulseSilentMediaInitOnce() {
+        CoroutineScope(Dispatchers.Default).launch {
+            runCatching {
+                silentAudioTrack?.release()
+                silentAudioTrack = null
 
-        runCatching {
-            current?.release()
-            val sampleRate = 8000
-            val sampleCount = sampleRate
-            val samples = ShortArray(sampleCount) { idx -> if (idx % 2 == 0) 1 else -1 }
-            val byteSize = sampleCount * 2
+                val sampleRate = 8000
+                val sampleCount = sampleRate / 8 // ~125ms
+                val samples = ShortArray(sampleCount) { 0 }
+                val byteSize = sampleCount * 2
 
-            val builder = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setBufferSizeInBytes(byteSize)
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(byteSize)
+                    .build()
 
-            val track = builder.build()
-            track.write(samples, 0, sampleCount)
-            track.setLoopPoints(0, sampleCount, -1)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                track.setVolume(0.001f)
+                track.write(samples, 0, sampleCount)
+                track.setVolume(0.0f)
+                track.play()
+                kotlinx.coroutines.delay(130L)
+                track.stop()
+                track.release()
             }
-            track.play()
-            silentAudioTrack = track
         }
     }
 
