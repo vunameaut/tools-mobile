@@ -48,7 +48,6 @@ fun SettingsScreen(
 ) {
     val permissions by viewModel.permissions.collectAsState()
     val fadeAudio by viewModel.fadeAudio.collectAsState()
-    val enableDnd by viewModel.enableDnd.collectAsState()
     val playWarning by viewModel.playWarningSound.collectAsState()
     val shakeToExtend by viewModel.shakeToExtend.collectAsState()
 
@@ -117,18 +116,9 @@ fun SettingsScreen(
 
                     SettingToggleRow(
                         title = "Giảm dần âm lượng (Fade-out)",
-                        description = "Hạ âm lượng nhạc từ từ trong 10 giây trước khi tắt màn hình giúp dễ ngủ",
+                        description = "Hạ âm lượng nhạc từ từ trước khi dừng phát, sau đó tự trả lại mức âm lượng cũ",
                         checked = fadeAudio,
                         onCheckedChange = { viewModel.toggleFadeAudio(it) }
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    SettingToggleRow(
-                        title = "Bật Không làm phiền (DND)",
-                        description = "Tự động kích hoạt Không làm phiền khi tắt màn hình để giấc ngủ không bị gián đoạn",
-                        checked = enableDnd,
-                        onCheckedChange = { viewModel.toggleDnd(it) }
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))

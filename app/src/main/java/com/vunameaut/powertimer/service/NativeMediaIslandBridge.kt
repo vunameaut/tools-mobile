@@ -176,7 +176,7 @@ object NativeMediaIslandBridge {
                     val mode = TimerForegroundService.timerFlow.value.selectedMode
                     TimerForegroundService.stopTimer(context)
                     CoroutineScope(Dispatchers.Main).launch {
-                        ShutdownManager(context).executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                        ShutdownManager(context).executeShutdown(mode, fadeAudio = false)
                     }
                 }
 

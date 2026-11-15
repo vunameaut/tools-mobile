@@ -18,7 +18,6 @@ class TimerAlarmReceiver : BroadcastReceiver() {
         const val ACTION_TIMER_EXPIRED = "com.vunameaut.powertimer.ACTION_TIMER_EXPIRED"
         const val EXTRA_SHUTDOWN_MODE = "extra_shutdown_mode"
         const val EXTRA_FADE_AUDIO = "extra_fade_audio"
-        const val EXTRA_ENABLE_DND = "extra_enable_dnd"
         private const val TAG = "TimerAlarmReceiver"
     }
 
@@ -41,7 +40,6 @@ class TimerAlarmReceiver : BroadcastReceiver() {
                 ShutdownMode.BANK_SAFE_SLEEP
             }
             val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
-            val enableDnd = intent.getBooleanExtra(EXTRA_ENABLE_DND, false)
 
             // Dừng ngay TimerForegroundService và NativeMediaIslandBridge để không bao giờ bị treo thời gian đếm ngược đến sáng
             TimerForegroundService.stopTimer(appCtx)
@@ -51,8 +49,7 @@ class TimerAlarmReceiver : BroadcastReceiver() {
                 try {
                     shutdownManager.executeShutdown(
                         mode = mode,
-                        fadeAudio = fadeAudio,
-                        enableDnd = enableDnd
+                        fadeAudio = fadeAudio
                     )
                 } finally {
                     if (wakeLock.isHeld) {

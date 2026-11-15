@@ -22,12 +22,11 @@ class ShutdownManager(private val context: Context) {
     private val audioMediaManager = AudioMediaManager(context)
 
     /**
-     * Thực thi quy trình tắt màn hình & dừng phát media
+     * Thực thi quy trình tắt màn hình & dừng phát media (Tuyệt đối không đụng vào chế độ Không làm phiền hay Chuông của máy)
      */
     suspend fun executeShutdown(
         mode: ShutdownMode,
-        fadeAudio: Boolean = true,
-        enableDnd: Boolean = false
+        fadeAudio: Boolean = true
     ): Boolean = withContext(Dispatchers.IO) {
         Log.i(TAG, "Executing screen off sequence with mode: $mode")
 
@@ -38,13 +37,6 @@ class ShutdownManager(private val context: Context) {
         // 1 & 2. Giảm âm lượng êm ái (chỉ khi màn hình đang sáng), dừng phát nhạc/video, nhả AudioFocus và khôi phục lại mức âm lượng ban đầu
         audioMediaManager.fadeOutAndPauseMedia(fadeAudio = fadeAudio && isScreenCurrentlyOn)
 
-        // 3. Xử lý chế độ Không làm phiền (Mặc định tắt để không bao giờ làm lỡ cuộc gọi / báo thức sáng hôm sau)
-        if (enableDnd) {
-            audioMediaManager.enableDoNotDisturb()
-        } else {
-            AudioMediaManager.restoreNormalRingerIfModified(context)
-        }
-
         // Nếu màn hình ĐÃ TẮT SẴN (ví dụ hết video YouTube và máy đã tự tắt màn hình từ trước),
         // không cần mở BlackoutSleepActivity làm sáng màn hình lại giữa đêm!
         if (!isScreenCurrentlyOn) {
@@ -52,7 +44,7 @@ class ShutdownManager(private val context: Context) {
             return@withContext true
         }
 
-        // 4. Thực hiện tắt / khóa màn hình theo chế độ khi màn hình đang sáng
+        // 3. Thực hiện tắt / khóa màn hình theo chế độ khi màn hình đang sáng
         return@withContext when (mode) {
             ShutdownMode.BANK_SAFE_SLEEP -> executeBankSafeSleep()
             ShutdownMode.DEVICE_ADMIN -> executeDeviceAdminLock()

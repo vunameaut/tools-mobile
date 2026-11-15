@@ -1030,7 +1030,7 @@ internal class FloatingIslandCanvasView(context: Context) : View(context) {
                             TimerForegroundService.stopTimer(appCtx)
                             collapseToCompact()
                             CoroutineScope(Dispatchers.Main).launch {
-                                ShutdownManager(appCtx).executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                                ShutdownManager(appCtx).executeShutdown(mode, fadeAudio = false)
                             }
                         } else {
                             TimerForegroundService.startTimer(appCtx, 30 * 60L, ShutdownMode.BANK_SAFE_SLEEP)

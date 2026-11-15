@@ -25,7 +25,6 @@ import com.vunameaut.powertimer.MainActivity
 import com.vunameaut.powertimer.R
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.data.model.TimerState
-import com.vunameaut.powertimer.manager.AudioMediaManager
 import com.vunameaut.powertimer.manager.ShakeDetector
 import com.vunameaut.powertimer.manager.ShutdownManager
 import com.vunameaut.powertimer.receiver.TimerAlarmReceiver
@@ -53,7 +52,6 @@ class TimerForegroundService : Service() {
         const val EXTRA_SECONDS = "EXTRA_SECONDS"
         const val EXTRA_MODE = "EXTRA_MODE"
         const val EXTRA_FADE_AUDIO = "EXTRA_FADE_AUDIO"
-        const val EXTRA_DND = "EXTRA_DND"
         const val EXTRA_WARNING = "EXTRA_WARNING"
         const val EXTRA_SHAKE = "EXTRA_SHAKE"
 
@@ -65,7 +63,6 @@ class TimerForegroundService : Service() {
             seconds: Long,
             mode: ShutdownMode,
             fadeAudio: Boolean = true,
-            enableDnd: Boolean = false,
             playWarning: Boolean = true,
             shakeToExtend: Boolean = true
         ) {
@@ -74,7 +71,6 @@ class TimerForegroundService : Service() {
                 putExtra(EXTRA_SECONDS, seconds)
                 putExtra(EXTRA_MODE, mode.name)
                 putExtra(EXTRA_FADE_AUDIO, fadeAudio)
-                putExtra(EXTRA_DND, enableDnd)
                 putExtra(EXTRA_WARNING, playWarning)
                 putExtra(EXTRA_SHAKE, shakeToExtend)
             }
@@ -136,7 +132,6 @@ class TimerForegroundService : Service() {
                         val remaining = ((targetEndEpochMs - now + 999L) / 1000L).coerceAtLeast(0L)
                         if (remaining <= 0L) {
                             // Hẹn giờ đã hết từ lúc màn hình tắt trong đêm -> Dừng sạch sẽ ngay khi mở máy, không khóa lại màn hình
-                            AudioMediaManager.restoreNormalRingerIfModified(applicationContext)
                             stopCountdown()
                         } else {
                             // Đồng bộ lại ngay số giây thực tế còn lại trên màn hình
@@ -205,14 +200,12 @@ class TimerForegroundService : Service() {
                 val modeName = intent.getStringExtra(EXTRA_MODE) ?: ShutdownMode.BANK_SAFE_SLEEP.name
                 val mode = runCatching { ShutdownMode.valueOf(modeName) }.getOrDefault(ShutdownMode.BANK_SAFE_SLEEP)
                 val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
-                val enableDnd = intent.getBooleanExtra(EXTRA_DND, false)
                 val playWarning = intent.getBooleanExtra(EXTRA_WARNING, true)
                 val shakeToExtend = intent.getBooleanExtra(EXTRA_SHAKE, true)
 
-                startCountdown(seconds, mode, fadeAudio, enableDnd, playWarning, shakeToExtend)
+                startCountdown(seconds, mode, fadeAudio, playWarning, shakeToExtend)
             }
             ACTION_STOP -> {
-                AudioMediaManager.restoreNormalRingerIfModified(applicationContext)
                 stopCountdown()
             }
             ACTION_ADD_10_MIN -> {
@@ -223,7 +216,7 @@ class TimerForegroundService : Service() {
                 val mode = current.selectedMode
                 stopCountdown()
                 serviceScope.launch {
-                    shutdownManager.executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                    shutdownManager.executeShutdown(mode, fadeAudio = false)
                 }
             }
         }
@@ -249,7 +242,7 @@ class TimerForegroundService : Service() {
             )
             acquireTimedWakeLock(newRemaining)
             NativeMediaIslandBridge.startOrUpdate(applicationContext, newRemaining, newTotal, current.selectedMode)
-            scheduleExactAlarm(newRemaining, current.selectedMode, current.fadeAudio, current.turnOnDnd)
+            scheduleExactAlarm(newRemaining, current.selectedMode, current.fadeAudio)
             updateNotification(newRemaining, current.selectedMode)
             SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
             ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
@@ -271,7 +264,6 @@ class TimerForegroundService : Service() {
         seconds: Long,
         mode: ShutdownMode,
         fadeAudio: Boolean,
-        enableDnd: Boolean,
         playWarning: Boolean,
         shakeToExtend: Boolean
     ) {
@@ -287,14 +279,13 @@ class TimerForegroundService : Service() {
             remainingSeconds = seconds,
             selectedMode = mode,
             fadeAudio = fadeAudio,
-            turnOnDnd = enableDnd,
             playWarningSound = playWarning,
             shakeToExtend = shakeToExtend
         )
 
         NativeMediaIslandBridge.startOrUpdate(applicationContext, seconds, seconds, mode)
         startForeground(NOTIFICATION_ID, buildNotification(seconds, mode))
-        scheduleExactAlarm(seconds, mode, fadeAudio, enableDnd)
+        scheduleExactAlarm(seconds, mode, fadeAudio)
         SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
         ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
 
@@ -348,7 +339,7 @@ class TimerForegroundService : Service() {
             }
 
             if (isActive) {
-                onCountdownFinished(mode, fadeAudio, enableDnd)
+                onCountdownFinished(mode, fadeAudio)
             }
         }
     }
@@ -369,20 +360,19 @@ class TimerForegroundService : Service() {
         stopSelf()
     }
 
-    private suspend fun onCountdownFinished(mode: ShutdownMode, fadeAudio: Boolean, enableDnd: Boolean) {
+    private suspend fun onCountdownFinished(mode: ShutdownMode, fadeAudio: Boolean) {
         Log.i("TimerService", "Countdown finished. Locking screen and stopping media...")
         // Dừng ngay MediaIsland và hủy hẹn giờ trước khi khóa màn hình để không giữ bất kỳ phiên âm thanh nào
         NativeMediaIslandBridge.stop()
         cancelExactAlarm()
-        shutdownManager.executeShutdown(mode, fadeAudio, enableDnd)
+        shutdownManager.executeShutdown(mode, fadeAudio)
         stopCountdown()
     }
 
     private fun scheduleExactAlarm(
         seconds: Long,
         mode: ShutdownMode,
-        fadeAudio: Boolean = true,
-        enableDnd: Boolean = false
+        fadeAudio: Boolean = true
     ) {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val triggerAtMillis = System.currentTimeMillis() + (seconds * 1000L)
@@ -391,7 +381,6 @@ class TimerForegroundService : Service() {
             action = TimerAlarmReceiver.ACTION_TIMER_EXPIRED
             putExtra(TimerAlarmReceiver.EXTRA_SHUTDOWN_MODE, mode.name)
             putExtra(TimerAlarmReceiver.EXTRA_FADE_AUDIO, fadeAudio)
-            putExtra(TimerAlarmReceiver.EXTRA_ENABLE_DND, enableDnd)
         }
         val pendingIntent = PendingIntent.getBroadcast(
             this,

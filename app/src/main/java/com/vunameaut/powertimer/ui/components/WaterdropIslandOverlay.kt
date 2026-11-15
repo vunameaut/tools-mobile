@@ -534,7 +534,7 @@ fun WaterdropIslandOverlay(
                                             isExpanded = false
                                             TimerForegroundService.stopTimer(context)
                                             scope.launch {
-                                                ShutdownManager(context).executeShutdown(mode, fadeAudio = false, enableDnd = false)
+                                                ShutdownManager(context).executeShutdown(mode, fadeAudio = false)
                                             }
                                         },
                                         shape = RoundedCornerShape(12.dp),

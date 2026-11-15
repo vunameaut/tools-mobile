@@ -1,6 +1,5 @@
 package com.vunameaut.powertimer.manager
 
-import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -11,31 +10,7 @@ import kotlinx.coroutines.delay
 
 class AudioMediaManager(private val context: Context) {
 
-    companion object {
-        private const val PREF_AUDIO_STATE = "power_timer_audio_restore_prefs"
-        private const val KEY_DND_ENABLED_BY_APP = "dnd_enabled_by_app"
-
-        /**
-         * Khôi phục lại chế độ Chuông cuộc gọi & Thông báo bình thường (Tắt DND nếu trước đó bị bật)
-         * để đảm bảo người dùng không bao giờ bị mất chuông cuộc gọi hoặc báo thức.
-         */
-        fun restoreNormalRingerIfModified(context: Context) {
-            runCatching {
-                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                val prefs = context.getSharedPreferences(PREF_AUDIO_STATE, Context.MODE_PRIVATE)
-                val modifiedByApp = prefs.getBoolean(KEY_DND_ENABLED_BY_APP, true)
-                if (modifiedByApp && nm.isNotificationPolicyAccessGranted) {
-                    if (nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
-                        nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
-                    }
-                    prefs.edit().putBoolean(KEY_DND_ENABLED_BY_APP, false).apply()
-                }
-            }
-        }
-    }
-
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     /**
      * Dừng phát nhạc / media đang phát trên thiết bị (Spotify, YouTube, Apple Music, podcast, v.v.)
@@ -112,19 +87,6 @@ class AudioMediaManager(private val context: Context) {
             runCatching {
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
             }
-        }
-    }
-
-    /**
-     * Kích hoạt chế độ Không làm phiền (Do Not Disturb) nếu người dùng chủ động bật
-     */
-    fun enableDoNotDisturb() {
-        if (notificationManager.isNotificationPolicyAccessGranted) {
-            context.getSharedPreferences(PREF_AUDIO_STATE, Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean(KEY_DND_ENABLED_BY_APP, true)
-                .apply()
-            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
         }
     }
 }
