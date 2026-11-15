@@ -761,6 +761,10 @@ fun LunarCalendarTool(onExit: () -> Unit) {
     var widgetFontSize by remember {
         mutableStateOf(LunarWidgetPrefs.getFontSize(context))
     }
+    var previewWidgetType by remember { mutableIntStateOf(0) } // 0: Bảng Tháng, 1: Bloc 2x2, 2: Thanh Gọn 4x1
+    val todayInfoForPreview = remember {
+        VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+    }
     val isPinnedOnHome = activeWidgetCount > 0 || isShortcutPinned
 
     LaunchedEffect(Unit) {
@@ -1044,9 +1048,9 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                         }
                     }
 
-                    // 3 kiểu kích thước Widget cho từng nhu cầu
+                    // 3. Chọn mẫu kích thước Widget + XEM TRƯỚC TRỰC TIẾP (Live Preview)
                     Text(
-                        text = "3. Các mẫu Widget có sẵn (Chạm để ghim hoặc kéo từ mục Tiện ích):",
+                        text = "3. Chọn mẫu Widget & Xem trước trực tiếp (Live Preview):",
                         fontSize = 11.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1054,48 +1058,88 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = {
-                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
-                                    context,
-                                    LunarCalendarAppWidgetProvider::class.java,
-                                    "Lịch Âm Vạn Niên (Bảng Tháng)"
+                        val typeLabels = listOf(
+                            "🗓️ Bảng Tháng\n(4x2)",
+                            "🧧 Lịch Bloc\n(2x2 Chữ To)",
+                            "📏 Thanh Gọn\n(4x1)"
+                        )
+                        typeLabels.forEachIndexed { idx, lbl ->
+                            val isSelectedType = (previewWidgetType == idx)
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelectedType) AccentCyan.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .border(
+                                        width = if (isSelectedType) 1.5.dp else 1.dp,
+                                        color = if (isSelectedType) AccentCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { previewWidgetType = idx }
+                            ) {
+                                Text(
+                                    text = lbl,
+                                    fontSize = 10.5.sp,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 13.sp,
+                                    color = if (isSelectedType) AccentCyan else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelectedType) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 4.dp)
                                 )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("🗓️ Bảng Tháng\n(4x2)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
+                            }
                         }
-                        OutlinedButton(
-                            onClick = {
-                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
-                                    context,
-                                    LunarDayBlocAppWidgetProvider::class.java,
-                                    "Tờ Lịch Bloc Hôm Nay (Chữ To)"
-                                )
+                    }
+
+                    // Khung Xem Trước Trực Quan trên nền giả lập hình nền điện thoại
+                    LiveLunarWidgetPreviewCard(
+                        widgetType = previewWidgetType,
+                        style = widgetStyle,
+                        fontSize = widgetFontSize,
+                        todayInfo = todayInfoForPreview
+                    )
+
+                    Button(
+                        onClick = {
+                            val (providerCls, label) = when (previewWidgetType) {
+                                1 -> LunarDayBlocAppWidgetProvider::class.java to "Tờ Lịch Bloc Hôm Nay (Chữ To)"
+                                2 -> LunarCompactStripAppWidgetProvider::class.java to "Lịch Âm Hôm Nay (Thanh Gọn 4x1)"
+                                else -> LunarCalendarAppWidgetProvider::class.java to "Lịch Âm Vạn Niên (Bảng Tháng)"
+                            }
+                            LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+                            val requested = ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                                context = context,
+                                providerClass = providerCls,
+                                label = label,
+                                showToastOnRequest = false
+                            )
+                            Toast.makeText(
+                                context,
+                                if (requested) {
+                                    "Đã gửi yêu cầu ghim \"$label\" (hoặc nhấn giữ màn hình chính → Tiện ích → Tools Hub để kéo ra)!"
+                                } else {
+                                    "Nhấn giữ màn hình chính → Tiện ích → Tools Hub → kéo \"$label\" ra ngoài!"
+                                },
+                                Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentCyan,
+                            contentColor = Color.Black
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = when (previewWidgetType) {
+                                1 -> "Ghim mẫu Tờ Lịch Bloc (2x2 Chữ To)"
+                                2 -> "Ghim mẫu Thanh Gọn (4x1)"
+                                else -> "Ghim mẫu Bảng Tháng (4x2)"
                             },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("🧧 Lịch Bloc\n(2x2 Chữ To)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentAmber, fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
-                                    context,
-                                    LunarCompactStripAppWidgetProvider::class.java,
-                                    "Lịch Âm Hôm Nay (Thanh Gọn 4x1)"
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("📏 Thanh Gọn\n(4x1)", fontSize = 10.5.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
-                        }
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.5.sp
+                        )
                     }
                 }
             }
@@ -1620,6 +1664,313 @@ fun LunarCalendarTool(onExit: () -> Unit) {
             }
 
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun LiveLunarWidgetPreviewCard(
+    widgetType: Int,
+    style: LunarWidgetStyle,
+    fontSize: LunarWidgetFontSize,
+    todayInfo: LunarDayFullInfo
+) {
+    val s = fontSize.scale
+    val isLightBg = (style == LunarWidgetStyle.LIGHT || style == LunarWidgetStyle.BLOC)
+
+    val widgetBg = when (style) {
+        LunarWidgetStyle.DARK -> Color(0xF50F172A)
+        LunarWidgetStyle.GLASS -> Color(0x70090D16)
+        LunarWidgetStyle.LIGHT -> Color(0xFAFFFDF9)
+        LunarWidgetStyle.BLOC -> Color(0xFAFFFBEB)
+    }
+    val widgetBorder = when (style) {
+        LunarWidgetStyle.DARK -> Color(0x5538BDF8)
+        LunarWidgetStyle.GLASS -> Color(0x55FFFFFF)
+        LunarWidgetStyle.LIGHT -> Color(0xFFCBD5E1)
+        LunarWidgetStyle.BLOC -> Color(0xFFDC2626)
+    }
+    val titleColor = when (style) {
+        LunarWidgetStyle.BLOC -> Color(0xFFDC2626)
+        LunarWidgetStyle.LIGHT -> Color(0xFF0F172A)
+        else -> Color(0xFFF8FAFC)
+    }
+    val subColor = when (style) {
+        LunarWidgetStyle.BLOC -> Color(0xFFB45309)
+        LunarWidgetStyle.LIGHT -> Color(0xFF0284C7)
+        else -> Color(0xFF38BDF8)
+    }
+    val primaryText = if (isLightBg) Color(0xFF0F172A) else Color(0xFFF8FAFC)
+    val secondaryText = if (isLightBg) Color(0xFF475569) else Color(0xFFCBD5E1)
+    val lunarAmber = if (isLightBg) Color(0xFFB45309) else Color(0xFFFBBF24)
+    val goodGreen = if (isLightBg) Color(0xFF15803D) else Color(0xFF4ADE80)
+
+    // Khung nền giả lập hình nền điện thoại để thấy rõ hiệu ứng kính mờ / sáng / tối
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF1E1B4B),
+                        Color(0xFF701A75),
+                        Color(0xFF0F766E)
+                    )
+                )
+            )
+            .padding(12.dp)
+    ) {
+        when (widgetType) {
+            // Mẫu 2: Tờ Lịch Bloc Hôm Nay (2x2 Chữ To)
+            1 -> {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth(0.68f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(widgetBg)
+                        .border(if (style == LunarWidgetStyle.BLOC) 2.dp else 1.dp, widgetBorder, RoundedCornerShape(18.dp))
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = "${todayInfo.dayOfWeekLabel.uppercase()} • THÁNG ${todayInfo.solarMonth}/${todayInfo.solarYear}",
+                        fontSize = (10f * s).coerceIn(8f, 14f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (style == LunarWidgetStyle.BLOC) Color(0xFFDC2626) else subColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = String.format("%02d", todayInfo.solarDay),
+                        fontSize = (38f * s).coerceIn(28f, 52f).sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = primaryText
+                    )
+                    Text(
+                        text = String.format("Âm lịch: %02d/%02d (%s)", todayInfo.lunarDay, todayInfo.lunarMonth, todayInfo.monthCanChi),
+                        fontSize = (11.5f * s).coerceIn(9.5f, 15.5f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = lunarAmber,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • ${if (todayInfo.isHoangDaoDay) "Hoàng Đạo" else todayInfo.starName}",
+                        fontSize = (10f * s).coerceIn(8.5f, 13.5f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = goodGreen,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Giờ tốt: " + todayInfo.auspiciousHours.take(2).joinToString(", "),
+                        fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
+                        color = secondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Mẫu 3: Thanh Lịch Gọn 4x1
+            2 -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(widgetBg)
+                        .border(if (style == LunarWidgetStyle.BLOC) 2.dp else 1.dp, widgetBorder, RoundedCornerShape(18.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0EA5E9))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (todayInfo.dayOfWeekIndex == Calendar.SUNDAY) "CN" else "T${todayInfo.dayOfWeekIndex}",
+                            fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE0F2FE)
+                        )
+                        Text(
+                            text = String.format("%02d", todayInfo.solarDay),
+                            fontSize = (20f * s).coerceIn(16f, 28f).sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = String.format("Âm lịch: %02d/%02d • Tháng %d/%d", todayInfo.lunarDay, todayInfo.lunarMonth, todayInfo.solarMonth, todayInfo.solarYear),
+                            fontSize = (12f * s).coerceIn(10f, 16f).sp,
+                            fontWeight = FontWeight.Bold,
+                            color = lunarAmber,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • Năm ${todayInfo.yearCanChi}",
+                            fontSize = (10.5f * s).coerceIn(8.5f, 14f).sp,
+                            fontWeight = FontWeight.Bold,
+                            color = goodGreen,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "✨ Giờ tốt: " + todayInfo.auspiciousHours.take(2).joinToString(", "),
+                            fontSize = (9.8f * s).coerceIn(8f, 13f).sp,
+                            color = secondaryText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // Mẫu 1 (Mặc định): Bảng Lịch Tháng 4x2
+            else -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(widgetBg)
+                        .border(if (style == LunarWidgetStyle.BLOC) 2.dp else 1.dp, widgetBorder, RoundedCornerShape(18.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🗓️ Tháng ${todayInfo.solarMonth} / ${todayInfo.solarYear} • Năm ${todayInfo.yearCanChi}",
+                                fontSize = (11.5f * s).coerceIn(9.5f, 15.5f).sp,
+                                fontWeight = FontWeight.Bold,
+                                color = titleColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = String.format("Hôm nay: %02d/%02d DL • %02d/%02d ÂL", todayInfo.solarDay, todayInfo.solarMonth, todayInfo.lunarDay, todayInfo.lunarMonth),
+                                fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
+                                fontWeight = FontWeight.Bold,
+                                color = subColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isLightBg) Color(0xFFE2E8F0) else Color(0xFF1E293B)
+                        ) {
+                            Text(
+                                text = "‹  Hôm nay  ›",
+                                fontSize = (9f * s).coerceIn(7.5f, 12f).sp,
+                                fontWeight = FontWeight.Bold,
+                                color = goodGreen,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    // Hàng thứ mẫu + 1 tuần minh hoạ trực quan cỡ chữ & màu sắc
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        listOf("T2", "T3", "T4", "T5", "T6", "T7", "CN").forEachIndexed { idx, dow ->
+                            Text(
+                                text = dow,
+                                fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                color = when (idx) {
+                                    6 -> Color(0xFFDC2626)
+                                    5 -> Color(0xFF0284C7)
+                                    else -> secondaryText
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        val sampleDays = listOf(
+                            Triple("10", "1/10", true),
+                            Triple("11", "2", false),
+                            Triple("12", "3•", false),
+                            Triple("13", "4", false),
+                            Triple("14", "5•", false),
+                            Triple("15", "6", false),
+                            Triple("16", "7", false)
+                        )
+                        sampleDays.forEachIndexed { idx, (sol, lun, isMung1) ->
+                            val isTodaySample = (idx == 5)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(1.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(
+                                        when {
+                                            isTodaySample -> Color(0xFF0EA5E9)
+                                            isMung1 -> Color(0x26FBBF24)
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .padding(vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = sol,
+                                    fontSize = (11.5f * s).coerceIn(9.5f, 16f).sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when {
+                                        isTodaySample -> Color.White
+                                        idx == 6 -> Color(0xFFDC2626)
+                                        idx == 5 -> Color(0xFF0284C7)
+                                        isMung1 -> lunarAmber
+                                        else -> primaryText
+                                    }
+                                )
+                                Text(
+                                    text = lun,
+                                    fontSize = (8f * s).coerceIn(7f, 11.5f).sp,
+                                    color = when {
+                                        isTodaySample -> Color(0xFFFEF08A)
+                                        isMung1 -> lunarAmber
+                                        lun.endsWith("•") -> goodGreen
+                                        else -> secondaryText
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isLightBg) Color(0x120F172A) else Color(0x18FFFFFF),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • ✨ Giờ tốt: ${todayInfo.auspiciousHours.take(2).joinToString(", ")}",
+                            fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = goodGreen,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
