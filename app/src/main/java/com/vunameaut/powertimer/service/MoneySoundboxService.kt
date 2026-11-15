@@ -1,10 +1,14 @@
 package com.vunameaut.powertimer.service
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -18,6 +22,9 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import com.vunameaut.powertimer.MainActivity
+import com.vunameaut.powertimer.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -73,10 +80,17 @@ class MoneySoundboxService : NotificationListenerService() {
     companion object {
         private const val PREF_NAME = "money_soundbox_prefs"
         private const val KEY_ENABLED = "soundbox_enabled"
+        private const val KEY_PINNED_KEEP_ALIVE = "soundbox_pinned_keep_alive"
         private const val KEY_BOOST_VOLUME = "soundbox_boost_volume"
         private const val KEY_SPEECH_RATE = "soundbox_speech_rate"
         private const val KEY_ALL_APPS_MODE = "soundbox_all_apps_mode"
         private const val KEY_TRANSACTIONS = "soundbox_tx_history"
+
+        private const val CHANNEL_PIN_ID = "soundbox_pin_keepalive_channel"
+        private const val PIN_NOTIFICATION_ID = 8808
+        const val ACTION_SOUNDBOX_TEST_VOICE = "com.vunameaut.powertimer.action.SOUNDBOX_TEST_VOICE"
+        const val ACTION_SOUNDBOX_RECONNECT = "com.vunameaut.powertimer.action.SOUNDBOX_RECONNECT"
+        const val ACTION_SOUNDBOX_UNPIN = "com.vunameaut.powertimer.action.SOUNDBOX_UNPIN"
 
         private val soundboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -163,7 +177,10 @@ class MoneySoundboxService : NotificationListenerService() {
          */
         fun ensureServiceRebound(context: Context) {
             if (!isNotificationListenerGranted(context)) return
-            if (activeInstance != null) return
+            if (activeInstance != null) {
+                refreshPinnedKeepAliveNotification(context)
+                return
+            }
             forceReconnectNotificationListener(context)
         }
 
@@ -209,6 +226,129 @@ class MoneySoundboxService : NotificationListenerService() {
                 .putBoolean(KEY_ENABLED, enabled)
                 .apply()
             if (enabled) ensureServiceRebound(context)
+            refreshPinnedKeepAliveNotification(context)
+        }
+
+        fun isPinnedKeepAlive(context: Context): Boolean {
+            return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_PINNED_KEEP_ALIVE, true)
+        }
+
+        fun setPinnedKeepAlive(context: Context, pinned: Boolean) {
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_PINNED_KEEP_ALIVE, pinned)
+                .apply()
+            if (pinned) ensureServiceRebound(context)
+            refreshPinnedKeepAliveNotification(context)
+        }
+
+        /**
+         * Ghim thông báo Foreground trực chiến 24/7 trên thanh trạng thái để hệ điều hành (Vivo/Xiaomi/OPPO/Samsung)
+         * tuyệt đối KHÔNG BAO GIỜ đóng băng dịch vụ đọc thông báo số dư khi người dùng chuyển sang công cụ khác hoặc thoát app.
+         */
+        fun refreshPinnedKeepAliveNotification(context: Context) {
+            val appCtx = context.applicationContext
+            val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val shouldPin = isEnabled(appCtx) && isPinnedKeepAlive(appCtx) && isNotificationListenerGranted(appCtx)
+
+            if (!shouldPin) {
+                runCatching {
+                    activeInstance?.stopForeground(STOP_FOREGROUND_REMOVE)
+                }
+                runCatching {
+                    nm.cancel(PIN_NOTIFICATION_ID)
+                }
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_PIN_ID,
+                    "Ghim Loa Báo Số Dư Trực Chiến 24/7",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Giữ dịch vụ đọc thông báo biến động số dư luôn hoạt động ngầm không bị tắt"
+                    setShowBadge(false)
+                }
+                nm.createNotificationChannel(channel)
+            }
+
+            val openIntent = Intent(appCtx, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("OPEN_TOOL_ID", "money_soundbox")
+            }
+            val openPi = PendingIntent.getActivity(
+                appCtx,
+                8801,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val testIntent = Intent(appCtx, MoneySoundboxService::class.java).apply {
+                action = ACTION_SOUNDBOX_TEST_VOICE
+            }
+            val testPi = PendingIntent.getService(
+                appCtx,
+                8802,
+                testIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val reconnectIntent = Intent(appCtx, MoneySoundboxService::class.java).apply {
+                action = ACTION_SOUNDBOX_RECONNECT
+            }
+            val reconnectPi = PendingIntent.getService(
+                appCtx,
+                8803,
+                reconnectIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val latestTx = _transactionsFlow.value.firstOrNull()
+            val subLine = if (latestTx != null) {
+                val verb = if (latestTx.isOutgoing) "Chuyển đi" else "Nhận được"
+                val formattedAmt = java.text.NumberFormat.getNumberInstance(Locale("vi", "VN")).format(latestTx.amount)
+                "GD gần nhất: $verb $formattedAmt đ • Luôn chạy ngầm khi dùng Tool khác"
+            } else {
+                "Luôn tự động đọc tiền Nhận vào / Chuyển đi kể cả khi dùng công cụ khác hoặc tắt màn hình"
+            }
+
+            val notif = NotificationCompat.Builder(appCtx, CHANNEL_PIN_ID)
+                .setSmallIcon(R.drawable.ic_stat_timer)
+                .setColor(0xFF22C55E.toInt())
+                .setContentTitle("📌 Loa Báo Số Dư đang Ghim trực chiến 24/7")
+                .setContentText(subLine)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(subLine))
+                .setContentIntent(openPi)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .addAction(android.R.drawable.ic_lock_silent_mode_off, "🔊 Nghe thử", testPi)
+                .addAction(android.R.drawable.stat_notify_sync, "🔄 Làm mới", reconnectPi)
+                .build()
+
+            val service = activeInstance
+            if (service != null) {
+                val startedFgs = runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        service.startForeground(
+                            PIN_NOTIFICATION_ID,
+                            notif,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                        )
+                    } else {
+                        service.startForeground(PIN_NOTIFICATION_ID, notif)
+                    }
+                    true
+                }.getOrDefault(false)
+                if (!startedFgs) {
+                    runCatching { nm.notify(PIN_NOTIFICATION_ID, notif) }
+                }
+            } else {
+                runCatching { nm.notify(PIN_NOTIFICATION_ID, notif) }
+            }
         }
 
         fun isBoostVolume(context: Context): Boolean {
@@ -682,6 +822,7 @@ class MoneySoundboxService : NotificationListenerService() {
                     )
                 )
             }
+            refreshPinnedKeepAliveNotification(appCtx)
 
             val speechText = formatVndForSpeech(amount, isOutgoing = isOutgoing)
             val rate = getSpeechRate(appCtx)
@@ -937,6 +1078,38 @@ class MoneySoundboxService : NotificationListenerService() {
         activeInstance = this
         _serviceConnectedFlow.value = true
         loadTransactions(applicationContext)
+        refreshPinnedKeepAliveNotification(applicationContext)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        activeInstance = this
+        _serviceConnectedFlow.value = true
+        when (intent?.action) {
+            ACTION_SOUNDBOX_TEST_VOICE -> {
+                announceMoneyReceived(
+                    context = applicationContext,
+                    amount = 150_000L,
+                    sourceApp = "Ngân hàng",
+                    rawMessage = "Kiểm tra loa từ thanh thông báo ghim",
+                    saveToHistory = false,
+                    isOutgoing = false
+                )
+            }
+            ACTION_SOUNDBOX_RECONNECT -> {
+                forceReconnectNotificationListener(applicationContext)
+                refreshPinnedKeepAliveNotification(applicationContext)
+                Toast.makeText(
+                    applicationContext,
+                    "✅ Đã làm mới kết nối Loa Báo Số Dư 24/7!",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            ACTION_SOUNDBOX_UNPIN -> {
+                setPinnedKeepAlive(applicationContext, false)
+            }
+        }
+        refreshPinnedKeepAliveNotification(applicationContext)
+        return START_STICKY
     }
 
     override fun onListenerConnected() {
@@ -944,6 +1117,7 @@ class MoneySoundboxService : NotificationListenerService() {
         activeInstance = this
         _serviceConnectedFlow.value = true
         loadTransactions(applicationContext)
+        refreshPinnedKeepAliveNotification(applicationContext)
     }
 
     override fun onListenerDisconnected() {

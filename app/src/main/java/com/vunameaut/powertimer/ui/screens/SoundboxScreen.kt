@@ -100,6 +100,7 @@ fun SoundboxTool(onExit: () -> Unit) {
         mutableStateOf(MoneySoundboxService.isNotificationListenerGranted(context))
     }
     var isEnabled by remember { mutableStateOf(MoneySoundboxService.isEnabled(context)) }
+    var isPinnedKeepAlive by remember { mutableStateOf(MoneySoundboxService.isPinnedKeepAlive(context)) }
     var boostVolume by remember { mutableStateOf(MoneySoundboxService.isBoostVolume(context)) }
     var allAppsMode by remember { mutableStateOf(MoneySoundboxService.isAllAppsMode(context)) }
     var speechRate by remember { mutableFloatStateOf(MoneySoundboxService.getSpeechRate(context)) }
@@ -114,14 +115,18 @@ fun SoundboxTool(onExit: () -> Unit) {
     LaunchedEffect(Unit) {
         MoneySoundboxService.ensureServiceRebound(context)
         MoneySoundboxService.loadTransactions(context)
+        MoneySoundboxService.refreshPinnedKeepAliveNotification(context)
     }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasNotificationAccess = MoneySoundboxService.isNotificationListenerGranted(context)
+                isEnabled = MoneySoundboxService.isEnabled(context)
+                isPinnedKeepAlive = MoneySoundboxService.isPinnedKeepAlive(context)
                 MoneySoundboxService.ensureServiceRebound(context)
                 MoneySoundboxService.loadTransactions(context)
+                MoneySoundboxService.refreshPinnedKeepAliveNotification(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -672,9 +677,9 @@ fun SoundboxTool(onExit: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Bật đọc số tiền tự động", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Bật đọc biến động số dư tự động", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(
-                                "Tự động đọc khi nhận thông báo biến động +VND từ Ngân hàng / MoMo",
+                                "Tự động đọc \"Nhận được ...\" hoặc \"Chuyển đi ...\" (không đọc STK hay Số dư)",
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -684,6 +689,42 @@ fun SoundboxTool(onExit: () -> Unit) {
                             onCheckedChange = {
                                 isEnabled = it
                                 MoneySoundboxService.setEnabled(context, it)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = AccentGreen
+                            )
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📌 Ghim Loa luôn hoạt động ngầm 24/7",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = AccentGreen
+                            )
+                            Text(
+                                text = "Ghim thông báo trực chiến trên thanh trạng thái & Trang chủ để khi bạn thoát ra dùng công cụ khác hoặc khóa máy, loa vẫn đọc 100%",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isPinnedKeepAlive,
+                            onCheckedChange = {
+                                isPinnedKeepAlive = it
+                                MoneySoundboxService.setPinnedKeepAlive(context, it)
+                                Toast.makeText(
+                                    context,
+                                    if (it) "📌 Đã ghim Loa Báo Số Dư chạy ngầm 24/7!" else "Đã tắt ghim thanh trạng thái",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.Black,

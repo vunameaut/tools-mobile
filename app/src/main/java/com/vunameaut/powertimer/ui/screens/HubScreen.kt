@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.vunameaut.powertimer.BuildConfig
 import com.vunameaut.powertimer.qr.VietQrHelper
+import com.vunameaut.powertimer.service.MoneySoundboxService
 import com.vunameaut.powertimer.tools.ToolEntry
 import com.vunameaut.powertimer.widget.LunarCalendarAppWidgetProvider
 import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
@@ -148,6 +149,22 @@ fun HubScreen(
     }
     var isReorderMode by remember { mutableStateOf(false) }
     val myVietQr = remember { VietQrHelper.loadMyVietQrProfile(context) }
+    var isSoundboxPinnedActive by remember {
+        mutableStateOf(
+            MoneySoundboxService.isNotificationListenerGranted(context) &&
+                MoneySoundboxService.isEnabled(context) &&
+                MoneySoundboxService.isPinnedKeepAlive(context)
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        MoneySoundboxService.ensureServiceRebound(context)
+        MoneySoundboxService.refreshPinnedKeepAliveNotification(context)
+        isSoundboxPinnedActive =
+            MoneySoundboxService.isNotificationListenerGranted(context) &&
+            MoneySoundboxService.isEnabled(context) &&
+            MoneySoundboxService.isPinnedKeepAlive(context)
+    }
 
     // Trạng thái kéo-thả trực tiếp trên lưới
     var draggingToolId by remember { mutableStateOf<String?>(null) }
@@ -210,6 +227,58 @@ fun HubScreen(
             if (hasUpdate) {
                 item(span = { GridItemSpan(2) }) {
                     UpdateBanner(updateState = updateState, onClick = onOpenUpdate)
+                }
+            }
+
+            if (isSoundboxPinnedActive) {
+                item(span = { GridItemSpan(2) }) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = AccentGreen.copy(alpha = 0.14f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, AccentGreen.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                            .clickable {
+                                tools.firstOrNull { it.id == "money_soundbox" }?.let(onOpenTool)
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(AccentGreen)
+                                )
+                                Column {
+                                    Text(
+                                        text = "📌 Loa Báo Số Dư đang Ghim trực chiến 24/7",
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentGreen,
+                                        fontSize = 12.5.sp
+                                    )
+                                    Text(
+                                        text = "Tự động đọc tiền Nhận vào / Chuyển đi ngay cả khi bạn đang mở công cụ khác hoặc khóa máy",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = AccentGreen
+                            )
+                        }
+                    }
                 }
             }
 
