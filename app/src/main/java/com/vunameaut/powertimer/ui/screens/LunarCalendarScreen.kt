@@ -860,7 +860,7 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                                 showToastOnRequest = false
                             )
                             scope.launch {
-                                delay(550L)
+                                delay(900L)
                                 val afterWidgets = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
                                 activeWidgetCount = afterWidgets
                                 if (afterWidgets > beforeWidgets) {
@@ -869,16 +869,16 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                                         "✅ Đã ghim Bảng Lịch Âm - Dương ra Màn hình chính thành công!",
                                         Toast.LENGTH_LONG
                                     ).show()
-                                } else if (view.hasWindowFocus()) {
-                                    // Launcher đã chặn requestPinAppWidget -> Dùng ngay quyền "Tạo lối tắt màn hình chính" để ghim Tờ Lịch Âm Động
+                                } else {
+                                    // Launcher Vivo/Xiaomi không tự thêm AppWidget -> Dùng ngay quyền "Tạo lối tắt trên Màn hình chính" để ghim Tờ Lịch Âm Động
                                     val shortcutOk = LunarCalendarAppWidgetProvider.pinLunarShortcutToHomeScreen(context)
-                                    delay(350L)
+                                    delay(450L)
                                     isShortcutPinned = LunarCalendarAppWidgetProvider.isLunarShortcutPinned(context)
                                     activeWidgetCount = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
                                     if (shortcutOk || isShortcutPinned) {
                                         Toast.makeText(
                                             context,
-                                            "✅ Đã ghim Tờ Lịch Âm - Dương ra Màn hình chính thành công!",
+                                            "✅ Đã ghim Lịch Âm - Dương ra Màn hình chính thành công!",
                                             Toast.LENGTH_LONG
                                         ).show()
                                     }

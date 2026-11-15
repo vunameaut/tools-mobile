@@ -444,15 +444,13 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
          * ra Màn hình chính thông qua quyền "Tạo lối tắt trên màn hình chính" (ShortcutManager + INSTALL_SHORTCUT).
          */
         fun pinLunarShortcutToHomeScreen(context: Context): Boolean {
+            var pinnedViaShortcutManager = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val sm = context.getSystemService(ShortcutManager::class.java)
                 val info = buildLiveLunarShortcutInfo(context)
                 if (sm != null && info != null) {
                     runCatching { sm.updateShortcuts(listOf(info)) }
-                    if (sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }) {
-                        return true
-                    }
-                    if (sm.isRequestPinShortcutSupported) {
+                    if (sm.isRequestPinShortcutSupported && !sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }) {
                         val successIntent = Intent(context, ToolsHubAppWidgetProvider::class.java).apply {
                             action = ToolsHubAppWidgetProvider.ACTION_PIN_WIDGET_SUCCESS
                             putExtra(ToolsHubAppWidgetProvider.EXTRA_WIDGET_LABEL, "Lịch Âm - Dương")
@@ -463,14 +461,16 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                             successIntent,
                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                         )
-                        val requested = runCatching {
+                        pinnedViaShortcutManager = runCatching {
                             sm.requestPinShortcut(info, callback.intentSender)
                         }.getOrDefault(false)
-                        if (requested) return true
+                    } else if (sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }) {
+                        pinnedViaShortcutManager = true
                     }
                 }
             }
-            return runCatching {
+            // Gửi đồng thời broadcast INSTALL_SHORTCUT cho các Launcher OEM (Vivo OriginOS / FuntouchOS / MIUI)
+            val broadcastOk = runCatching {
                 val todayCal = Calendar.getInstance()
                 val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
                 val todayMonth = todayCal.get(Calendar.MONTH) + 1
@@ -491,6 +491,7 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 context.sendBroadcast(addIntent)
                 true
             }.getOrDefault(false)
+            return pinnedViaShortcutManager || broadcastOk
         }
     }
 
