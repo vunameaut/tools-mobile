@@ -89,6 +89,7 @@ import androidx.compose.ui.zIndex
 import com.vunameaut.powertimer.BuildConfig
 import com.vunameaut.powertimer.qr.VietQrHelper
 import com.vunameaut.powertimer.tools.ToolEntry
+import com.vunameaut.powertimer.widget.LunarCalendarAppWidgetProvider
 import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
 import com.vunameaut.powertimer.widget.VietQrAppWidgetProvider
 import com.vunameaut.powertimer.ui.theme.AccentAmber
@@ -448,9 +449,21 @@ private fun HomeScreenWidgetsBanner() {
                 fontSize = 13.5.sp
             )
             Text(
-                text = "Đặt thanh 4 nút công cụ nhanh (Hẹn giờ, Quét QR, VietQR, Tải Video) hoặc thẻ mã VietQR cá nhân ra thẳng màn hình chính điện thoại:",
+                text = "Đặt Lịch Âm - Dương Tháng (giống Google Calendar), thanh 4 nút công cụ nhanh hoặc mã VietQR cá nhân ra thẳng màn hình chính:",
                 fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            QuickTileChip(
+                label = "📅 Ghim Tiện Ích Lịch Âm - Dương Tháng (4x3)",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                        context,
+                        LunarCalendarAppWidgetProvider::class.java,
+                        "Lịch Âm - Dương Tháng"
+                    )
+                }
             )
 
             Row(

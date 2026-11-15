@@ -7,6 +7,7 @@ import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Casino
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DocumentScanner
+import androidx.compose.material.icons.rounded.EventNote
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PhoneCallback
@@ -19,6 +20,7 @@ import com.vunameaut.powertimer.ui.screens.BillSplitterTool
 import com.vunameaut.powertimer.ui.screens.CountdownDaysTool
 import com.vunameaut.powertimer.ui.screens.FakeCallTool
 import com.vunameaut.powertimer.ui.screens.LedBannerTool
+import com.vunameaut.powertimer.ui.screens.LunarCalendarTool
 import com.vunameaut.powertimer.ui.screens.MemeSoundboardTool
 import com.vunameaut.powertimer.ui.screens.PowerTimerTool
 import com.vunameaut.powertimer.ui.screens.QrBarcodeStudioTool
@@ -137,5 +139,13 @@ val ToolRegistry: List<ToolEntry> = listOf(
         icon = Icons.Rounded.CalendarMonth,
         accent = AccentRed,
         content = { onBack -> CountdownDaysTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "lunar_calendar",
+        title = "Lịch Âm - Dương Vạn Niên",
+        description = "Xem Lịch Âm Dương, Can Chi, Giờ Hoàng Đạo & Ghim tiện ích Lịch Tháng ra Màn hình chính",
+        icon = Icons.Rounded.EventNote,
+        accent = AccentCyan,
+        content = { onBack -> LunarCalendarTool(onExit = onBack) }
     )
 )

@@ -244,6 +244,24 @@
                 android:resource="@xml/widget_my_vietqr_info" />
         </receiver>
 
+        <receiver
+            android:name=".widget.LunarCalendarAppWidgetProvider"
+            android:label="Lịch Âm - Dương Tháng (Tools Hub)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LUNAR_PREV_MONTH" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LUNAR_NEXT_MONTH" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LUNAR_TODAY_MONTH" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lunar_calendar_info" />
+        </receiver>
+
     </application>
 
 </manifest>

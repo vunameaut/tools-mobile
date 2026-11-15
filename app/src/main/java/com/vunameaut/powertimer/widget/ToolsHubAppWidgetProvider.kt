@@ -15,6 +15,8 @@ import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.qr.VietQrHelper
 import com.vunameaut.powertimer.service.QuickTileActions
 import com.vunameaut.powertimer.service.TimerForegroundService
+import com.vunameaut.powertimer.ui.screens.VietnameseLunarCalendar
+import java.util.Calendar
 
 /**
  * Tiện ích (AppWidget) 4 nút bấm nhanh đặt trực tiếp ngoài Màn hình chính điện thoại:
@@ -38,6 +40,10 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
             val qrIds = manager.getAppWidgetIds(ComponentName(appCtx, VietQrAppWidgetProvider::class.java))
             if (qrIds.isNotEmpty()) {
                 qrIds.forEach { id -> VietQrAppWidgetProvider.updateSingleQrWidget(appCtx, manager, id) }
+            }
+            val lunarIds = manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java))
+            if (lunarIds.isNotEmpty()) {
+                lunarIds.forEach { id -> LunarCalendarAppWidgetProvider.updateSingleLunarWidget(appCtx, manager, id) }
             }
         }
 
@@ -107,6 +113,23 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
             )
         }
 
+        internal fun buildOpenToolPendingIntent(
+            context: Context,
+            requestCode: Int,
+            toolId: String
+        ): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("OPEN_TOOL_ID", toolId)
+            }
+            return PendingIntent.getActivity(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
         fun requestPinWidgetToHomeScreen(
             context: Context,
             providerClass: Class<out AppWidgetProvider>,
@@ -129,7 +152,7 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
             }
             Toast.makeText(
                 context,
-                "Nhấn giữ khoảng trống ngoài Màn hình chính -> Chọn Tiện ích (Widgets) -> Kéo \"Tools Hub\" ra ngoài!",
+                "Nhấn giữ khoảng trống ngoài Màn hình chính -> Chọn Tiện ích (Widgets) -> Kéo \"$label\" ra ngoài!",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -221,3 +244,153 @@ class VietQrAppWidgetProvider : AppWidgetProvider() {
     }
 }
 
+/**
+ * Tiện ích (AppWidget) Lịch Âm - Dương Tháng ngoài Màn hình chính (tương tác chuyển tháng giống Google Calendar).
+ */
+class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
+
+    companion object {
+        const val ACTION_PREV_MONTH = "com.vunameaut.powertimer.widget.ACTION_LUNAR_PREV_MONTH"
+        const val ACTION_NEXT_MONTH = "com.vunameaut.powertimer.widget.ACTION_LUNAR_NEXT_MONTH"
+        const val ACTION_TODAY_MONTH = "com.vunameaut.powertimer.widget.ACTION_LUNAR_TODAY_MONTH"
+        private const val PREF_WIDGET = "lunar_calendar_widget_prefs"
+        private const val KEY_OFFSET_MONTHS = "viewing_month_offset"
+
+        internal fun updateSingleLunarWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int
+        ) {
+            val prefs = context.getSharedPreferences(PREF_WIDGET, Context.MODE_PRIVATE)
+            val monthOffset = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+
+            val todayCal = Calendar.getInstance()
+            val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+            val todayMonth = todayCal.get(Calendar.MONTH) + 1
+            val todayYear = todayCal.get(Calendar.YEAR)
+            val todayInfo = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+
+            val viewCal = Calendar.getInstance().apply {
+                set(Calendar.DAY_OF_MONTH, 1)
+                add(Calendar.MONTH, monthOffset)
+            }
+            val viewMonth = viewCal.get(Calendar.MONTH) + 1
+            val viewYear = viewCal.get(Calendar.YEAR)
+            val midMonthLunar = VietnameseLunarCalendar.getFullDayInfo(15, viewMonth, viewYear)
+
+            val views = RemoteViews(context.packageName, R.layout.widget_lunar_calendar)
+            views.setTextViewText(
+                R.id.widget_lunar_month_title,
+                "🗓️ THÁNG $viewMonth / $viewYear • Năm ${midMonthLunar.yearCanChi}"
+            )
+            views.setTextViewText(
+                R.id.widget_lunar_today_subtitle,
+                String.format(
+                    "Hôm nay: %02d/%02d DL • %02d/%02d ÂL (%s)",
+                    todayDay,
+                    todayMonth,
+                    todayInfo.lunarDay,
+                    todayInfo.lunarMonth,
+                    if (todayInfo.isHoangDaoDay) "Hoàng Đạo 🟢" else todayInfo.dayCanChi
+                )
+            )
+
+            val gridBmp = VietnameseLunarCalendar.renderMonthWidgetBitmap(viewYear, viewMonth)
+            views.setImageViewBitmap(R.id.widget_lunar_grid_image, gridBmp)
+
+            // Nút Tháng trước (◀)
+            val prevIntent = Intent(context, LunarCalendarAppWidgetProvider::class.java).apply {
+                action = ACTION_PREV_MONTH
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_lunar_btn_prev,
+                PendingIntent.getBroadcast(
+                    context,
+                    3001,
+                    prevIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+
+            // Nút Hôm nay
+            val todayIntent = Intent(context, LunarCalendarAppWidgetProvider::class.java).apply {
+                action = ACTION_TODAY_MONTH
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_lunar_btn_today,
+                PendingIntent.getBroadcast(
+                    context,
+                    3002,
+                    todayIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+
+            // Nút Tháng sau (▶)
+            val nextIntent = Intent(context, LunarCalendarAppWidgetProvider::class.java).apply {
+                action = ACTION_NEXT_MONTH
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_lunar_btn_next,
+                PendingIntent.getBroadcast(
+                    context,
+                    3003,
+                    nextIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+
+            // Chạm vào tiêu đề hoặc bảng lịch -> Mở công cụ Lịch Âm - Dương trong App
+            val openLunarToolPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(
+                context,
+                3004,
+                "lunar_calendar"
+            )
+            views.setOnClickPendingIntent(R.id.widget_lunar_header_click, openLunarToolPi)
+            views.setOnClickPendingIntent(R.id.widget_lunar_grid_image, openLunarToolPi)
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+
+        fun refreshAllLunarWidgets(context: Context) {
+            val appCtx = context.applicationContext
+            val manager = AppWidgetManager.getInstance(appCtx)
+            val ids = manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java))
+            ids.forEach { id -> updateSingleLunarWidget(appCtx, manager, id) }
+        }
+    }
+
+    override fun onUpdate(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray
+    ) {
+        for (appWidgetId in appWidgetIds) {
+            updateSingleLunarWidget(context, appWidgetManager, appWidgetId)
+        }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        val prefs = context.getSharedPreferences(PREF_WIDGET, Context.MODE_PRIVATE)
+        when (intent.action) {
+            ACTION_PREV_MONTH -> {
+                val cur = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, (cur - 1).coerceIn(-120, 120)).apply()
+                refreshAllLunarWidgets(context)
+            }
+            ACTION_NEXT_MONTH -> {
+                val cur = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, (cur + 1).coerceIn(-120, 120)).apply()
+                refreshAllLunarWidgets(context)
+            }
+            ACTION_TODAY_MONTH,
+            Intent.ACTION_DATE_CHANGED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED -> {
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, 0).apply()
+                refreshAllLunarWidgets(context)
+            }
+        }
+    }
+}
