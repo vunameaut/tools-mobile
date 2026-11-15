@@ -3,17 +3,20 @@
     android:id="@+id/widget_lunar_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_bg_dark"
+    android:background="@drawable/widget_lunar_card_bg"
     android:orientation="vertical"
-    android:padding="10dp">
+    android:paddingStart="10dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="8dp">
 
-    <!-- Thanh tiêu đề & Điều hướng Tháng ngay trên Màn hình chính -->
+    <!-- 1. Thanh tiêu đề & Điều hướng Tháng (Vector Text 100% sắc nét) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingBottom="6dp">
+        android:paddingBottom="4dp">
 
         <LinearLayout
             android:id="@+id/widget_lunar_header_click"
@@ -27,72 +30,202 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:singleLine="true"
-                android:text="🗓️ THÁNG 11 / 2026"
-                android:textColor="#22D3EE"
-                android:textSize="13sp"
+                android:text="🗓️ Tháng 11 / 2026 • Bính Ngọ"
+                android:textColor="#F8FAFC"
+                android:textSize="13.5sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/widget_lunar_today_subtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
                 android:ellipsize="end"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:singleLine="true"
-                android:text="Hôm nay: 15/11 DL • 06/10 ÂL (Bính Ngọ)"
-                android:textColor="#CBD5E1"
-                android:textSize="10.5sp" />
+                android:text="Hôm nay: 15/11 DL • 07/10 ÂL (Hoàng Đạo 🟢)"
+                android:textColor="#38BDF8"
+                android:textSize="10.5sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/widget_lunar_btn_prev"
-            android:layout_width="32dp"
-            android:layout_height="28dp"
+            android:layout_width="28dp"
+            android:layout_height="25dp"
             android:background="@drawable/widget_btn_bg"
             android:gravity="center"
-            android:text="◀"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
+            android:includeFontPadding="false"
+            android:text="‹"
+            android:textColor="#F8FAFC"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/widget_lunar_btn_today"
             android:layout_width="wrap_content"
-            android:layout_height="28dp"
+            android:layout_height="25dp"
             android:layout_marginStart="4dp"
             android:layout_marginEnd="4dp"
             android:background="@drawable/widget_btn_bg"
             android:gravity="center"
+            android:includeFontPadding="false"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
             android:text="Hôm nay"
+            android:textColor="#4ADE80"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_lunar_btn_next"
+            android:layout_width="28dp"
+            android:layout_height="25dp"
+            android:background="@drawable/widget_btn_bg"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="›"
+            android:textColor="#F8FAFC"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 2. Hàng tiêu đề 7 Thứ trong tuần (Vector TextView nguyên bản) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="2dp"
+        android:paddingBottom="3dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T2"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T3"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T4"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T5"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T6"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="T7"
+            android:textColor="#38BDF8"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:text="CN"
+            android:textColor="#FB7185"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 3. Khung chứa Lưới Lịch Tháng bằng TextView Vector nguyên bản (Không dùng Bitmap mờ) -->
+    <LinearLayout
+        android:id="@+id/widget_lunar_grid_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical" />
+
+    <!-- 4. Thanh chân trang hiển thị Can Chi & Giờ Hoàng Đạo sắc nét -->
+    <LinearLayout
+        android:id="@+id/widget_lunar_footer_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/widget_footer_pill_bg"
+        android:orientation="vertical"
+        android:paddingStart="8dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:id="@+id/widget_lunar_footer_canchi"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:text="🐍 Ngày Quý Tỵ • Tháng Kỷ Hợi • Năm Bính Ngọ"
             android:textColor="#4ADE80"
             android:textSize="10.5sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/widget_lunar_btn_next"
-            android:layout_width="32dp"
-            android:layout_height="28dp"
-            android:background="@drawable/widget_btn_bg"
-            android:gravity="center"
-            android:text="▶"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:id="@+id/widget_lunar_footer_hours"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:text="✨ Giờ tốt: Sửu (01-03h), Thìn (07-09h), Ngọ (11-13h), Mùi (13-15h)"
+            android:textColor="#E2E8F0"
+            android:textSize="9.8sp" />
     </LinearLayout>
 
-    <!-- Lưới Lịch Tháng Âm - Dương sắc nét -->
-    <ImageView
-        android:id="@+id/widget_lunar_grid_image"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:contentDescription="Lịch Âm Dương"
-        android:scaleType="fitXY"
-        android:src="@drawable/lunar_widget_preview" />
-
 </LinearLayout>
-

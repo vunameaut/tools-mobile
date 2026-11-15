@@ -251,7 +251,7 @@
 
         <receiver
             android:name=".widget.LunarCalendarAppWidgetProvider"
-            android:label="Lịch Âm - Dương Tháng (Tools Hub)"
+            android:label="Lịch Âm Vạn Niên"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

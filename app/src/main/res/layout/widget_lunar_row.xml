@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <!-- Cột 0: Thứ 2 -->
+    <LinearLayout
+        android:id="@+id/cell_0"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_0"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_0"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 1: Thứ 3 -->
+    <LinearLayout
+        android:id="@+id/cell_1"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 2: Thứ 4 -->
+    <LinearLayout
+        android:id="@+id/cell_2"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 3: Thứ 5 -->
+    <LinearLayout
+        android:id="@+id/cell_3"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 4: Thứ 6 -->
+    <LinearLayout
+        android:id="@+id/cell_4"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_4"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_4"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 5: Thứ 7 -->
+    <LinearLayout
+        android:id="@+id/cell_5"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_5"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#38BDF8"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_5"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+    <!-- Cột 6: Chủ Nhật -->
+    <LinearLayout
+        android:id="@+id/cell_6"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_margin="1dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/solar_6"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#FB7185"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/lunar_6"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#CBD5E1"
+            android:textSize="8.8sp" />
+    </LinearLayout>
+
+</LinearLayout>
+

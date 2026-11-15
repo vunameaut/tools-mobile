@@ -276,6 +276,16 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
         private const val PREF_WIDGET = "lunar_calendar_widget_prefs"
         private const val KEY_OFFSET_MONTHS = "viewing_month_offset"
 
+        private val CELL_IDS = intArrayOf(
+            R.id.cell_0, R.id.cell_1, R.id.cell_2, R.id.cell_3, R.id.cell_4, R.id.cell_5, R.id.cell_6
+        )
+        private val SOLAR_IDS = intArrayOf(
+            R.id.solar_0, R.id.solar_1, R.id.solar_2, R.id.solar_3, R.id.solar_4, R.id.solar_5, R.id.solar_6
+        )
+        private val LUNAR_IDS = intArrayOf(
+            R.id.lunar_0, R.id.lunar_1, R.id.lunar_2, R.id.lunar_3, R.id.lunar_4, R.id.lunar_5, R.id.lunar_6
+        )
+
         internal fun updateSingleLunarWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
@@ -301,7 +311,7 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.widget_lunar_calendar)
             views.setTextViewText(
                 R.id.widget_lunar_month_title,
-                "🗓️ THÁNG $viewMonth / $viewYear • Năm ${midMonthLunar.yearCanChi}"
+                "🗓️ Tháng $viewMonth / $viewYear • Năm ${midMonthLunar.yearCanChi}"
             )
             views.setTextViewText(
                 R.id.widget_lunar_today_subtitle,
@@ -315,8 +325,91 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 )
             )
 
-            val gridBmp = VietnameseLunarCalendar.renderMonthWidgetBitmap(viewYear, viewMonth)
-            views.setImageViewBitmap(R.id.widget_lunar_grid_image, gridBmp)
+            // 1. Tạo lưới lịch tháng bằng 100% Vector TextView nguyên bản (Không dùng Bitmap để chữ siêu nét)
+            views.removeAllViews(R.id.widget_lunar_grid_container)
+            val openLunarToolPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(
+                context,
+                3004,
+                "lunar_calendar"
+            )
+
+            val monthCal = Calendar.getInstance().apply {
+                set(viewYear, viewMonth - 1, 1, 12, 0, 0)
+            }
+            val daysInMonth = monthCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+            val firstDow = monthCal.get(Calendar.DAY_OF_WEEK)
+            val leadingEmpty = if (firstDow == Calendar.SUNDAY) 6 else (firstDow - Calendar.MONDAY)
+            val totalCells = leadingEmpty + daysInMonth
+            val numRows = if (totalCells > 35) 6 else 5
+
+            for (row in 0 until numRows) {
+                val rowViews = RemoteViews(context.packageName, R.layout.widget_lunar_row)
+                for (col in 0..6) {
+                    val cellIdx = row * 7 + col
+                    val day = cellIdx - leadingEmpty + 1
+                    val cellId = CELL_IDS[col]
+                    val solarId = SOLAR_IDS[col]
+                    val lunarId = LUNAR_IDS[col]
+
+                    if (day in 1..daysInMonth) {
+                        val info = VietnameseLunarCalendar.getFullDayInfo(day, viewMonth, viewYear)
+                        val isToday = (day == todayDay && viewMonth == todayMonth && viewYear == todayYear)
+                        val isMung1OrRam = (info.lunarDay == 1 || info.lunarDay == 15)
+
+                        rowViews.setTextViewText(solarId, day.toString())
+                        val lunarBase = if (info.lunarDay == 1 || day == 1) {
+                            "${info.lunarDay}/${info.lunarMonth}"
+                        } else {
+                            info.lunarDay.toString()
+                        }
+                        val lunarDisplay = if (info.isHoangDaoDay && !isToday && !isMung1OrRam) {
+                            "$lunarBase•"
+                        } else {
+                            lunarBase
+                        }
+                        rowViews.setTextViewText(lunarId, lunarDisplay)
+
+                        val bgRes = when {
+                            isToday -> R.drawable.widget_cell_today_bg
+                            isMung1OrRam -> R.drawable.widget_cell_mung1_bg
+                            else -> R.drawable.widget_cell_normal_bg
+                        }
+                        rowViews.setInt(cellId, "setBackgroundResource", bgRes)
+
+                        val solarColor = when {
+                            isToday -> 0xFFFFFFFF.toInt()
+                            col == 6 -> 0xFFFB7185.toInt() // Chủ nhật đỏ tươi
+                            col == 5 -> 0xFF38BDF8.toInt() // Thứ 7 xanh sáng
+                            isMung1OrRam -> 0xFFFDE68A.toInt() // Mùng 1 / Rằm vàng sáng
+                            else -> 0xFFF8FAFC.toInt() // Ngày thường trắng tinh sắc nét
+                        }
+                        val lunarColor = when {
+                            isToday -> 0xFFFEF08A.toInt() // Âm lịch hôm nay vàng sáng
+                            isMung1OrRam -> 0xFFFBBF24.toInt() // Mùng 1 / Rằm vàng cam đậm
+                            info.isHoangDaoDay -> 0xFF86EFAC.toInt() // Ngày Hoàng Đạo xanh ngọc dịu
+                            else -> 0xFFCBD5E1.toInt() // Ngày thường bạc sáng rõ nét
+                        }
+                        rowViews.setTextColor(solarId, solarColor)
+                        rowViews.setTextColor(lunarId, lunarColor)
+                        rowViews.setOnClickPendingIntent(cellId, openLunarToolPi)
+                    } else {
+                        rowViews.setTextViewText(solarId, "")
+                        rowViews.setTextViewText(lunarId, "")
+                        rowViews.setInt(cellId, "setBackgroundResource", R.drawable.widget_cell_normal_bg)
+                    }
+                }
+                views.addView(R.id.widget_lunar_grid_container, rowViews)
+            }
+
+            // 2. Cập nhật Thanh Chân Trang bằng Vector TextView sắc nét
+            views.setTextViewText(
+                R.id.widget_lunar_footer_canchi,
+                "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • Tháng ${todayInfo.monthCanChi} • Năm ${todayInfo.yearCanChi}"
+            )
+            views.setTextViewText(
+                R.id.widget_lunar_footer_hours,
+                "✨ Giờ tốt: " + todayInfo.auspiciousHours.take(4).joinToString(", ")
+            )
 
             // Nút Tháng trước (◀)
             val prevIntent = Intent(context, LunarCalendarAppWidgetProvider::class.java).apply {
@@ -360,14 +453,9 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 )
             )
 
-            // Chạm vào tiêu đề hoặc bảng lịch -> Mở công cụ Lịch Âm - Dương trong App
-            val openLunarToolPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(
-                context,
-                3004,
-                "lunar_calendar"
-            )
+            // Chạm vào tiêu đề hoặc chân trang -> Mở công cụ Lịch Âm - Dương trong App
             views.setOnClickPendingIntent(R.id.widget_lunar_header_click, openLunarToolPi)
-            views.setOnClickPendingIntent(R.id.widget_lunar_grid_image, openLunarToolPi)
+            views.setOnClickPendingIntent(R.id.widget_lunar_footer_box, openLunarToolPi)
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
