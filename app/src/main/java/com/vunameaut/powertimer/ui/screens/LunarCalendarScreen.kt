@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -62,14 +63,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -636,12 +640,88 @@ object VietnameseLunarCalendar {
 
         return bmp
     }
+
+    /**
+     * Vẽ Biểu tượng Tờ Lịch Bloc Âm - Dương Hôm Nay (192x192) sắc nét để ghim trực tiếp
+     * ra Màn hình chính qua quyền "Tạo lối tắt trên màn hình chính" (ShortcutManager / INSTALL_SHORTCUT).
+     */
+    fun renderLiveShortcutIconBitmap(): Bitmap {
+        val size = 192
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+
+        val todayCal = Calendar.getInstance()
+        val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+        val todayMonth = todayCal.get(Calendar.MONTH) + 1
+        val todayYear = todayCal.get(Calendar.YEAR)
+        val info = getFullDayInfo(todayDay, todayMonth, todayYear)
+
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF0F172A.toInt()
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(RectF(8f, 8f, 184f, 184f), 40f, 40f, bgPaint)
+
+        // Mũ lịch đỏ tươi phía trên giống tờ lịch Bloc truyền thống
+        val topHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFDC2626.toInt()
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(RectF(8f, 8f, 184f, 60f), 40f, 40f, topHeaderPaint)
+        canvas.drawRect(RectF(8f, 36f, 184f, 60f), topHeaderPaint)
+
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF38BDF8.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+        }
+        canvas.drawRoundRect(RectF(8f, 8f, 184f, 184f), 40f, 40f, borderPaint)
+
+        val monthTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFFFF.toInt()
+            textSize = 23f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("THÁNG $todayMonth", 96f, 43f, monthTextPaint)
+
+        val solarDayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFFFF.toInt()
+            textSize = 68f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(String.format("%02d", todayDay), 96f, 126f, solarDayPaint)
+
+        val lunarBadgeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x33F59E0B
+            style = Paint.Style.FILL
+        }
+        canvas.drawRoundRect(RectF(22f, 138f, 170f, 172f), 16f, 16f, lunarBadgeBg)
+
+        val lunarTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFBBF24.toInt()
+            textSize = 22f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(
+            String.format("ÂL: %02d/%02d", info.lunarDay, info.lunarMonth),
+            96f,
+            162f,
+            lunarTextPaint
+        )
+
+        return bmp
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun LunarCalendarTool(onExit: () -> Unit) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
     BackHandler(onBack = onExit)
 
     val todayCal = remember { Calendar.getInstance() }
@@ -664,107 +744,20 @@ fun LunarCalendarTool(onExit: () -> Unit) {
         VietnameseLunarCalendar.getUpcomingEvents(maxCount = 8)
     }
 
-    var showPinHelperDialog by remember { mutableStateOf(false) }
     var activeWidgetCount by remember {
         mutableIntStateOf(LunarCalendarAppWidgetProvider.getActiveWidgetCount(context))
     }
+    var isShortcutPinned by remember {
+        mutableStateOf(LunarCalendarAppWidgetProvider.isLunarShortcutPinned(context))
+    }
+    val isPinnedOnHome = activeWidgetCount > 0 || isShortcutPinned
 
-    LaunchedEffect(showPinHelperDialog) {
+    LaunchedEffect(Unit) {
         while (true) {
             activeWidgetCount = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
-            delay(700L)
+            isShortcutPinned = LunarCalendarAppWidgetProvider.isLunarShortcutPinned(context)
+            delay(800L)
         }
-    }
-
-    if (showPinHelperDialog) {
-        AlertDialog(
-            onDismissRequest = { showPinHelperDialog = false },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = {
-                Text(
-                    text = "📌 Ghim Lịch Âm Ra Màn Hình Chính",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (activeWidgetCount > 0) AccentGreen.copy(alpha = 0.16f) else AccentAmber.copy(alpha = 0.15f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = if (activeWidgetCount > 0) {
-                                "✅ Đã ghim thành công $activeWidgetCount tiện ích Lịch Âm - Dương ngoài Màn hình chính!"
-                            } else {
-                                "ℹ️ Chưa thấy tiện ích trên Màn hình chính. Nếu máy bạn (Vivo, Xiaomi, OPPO...) không tự hiện bảng xác nhận khi bấm Ghim, hãy làm theo 1 trong 2 cách dưới đây:"
-                            },
-                            color = if (activeWidgetCount > 0) AccentGreen else AccentAmber,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.5.sp,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-
-                    Text(
-                        text = "Cách 1 (Mọi dòng máy đều làm được 100%):\n" +
-                            "1. Thoát ra Màn hình chính điện thoại.\n" +
-                            "2. Nhấn giữ 2 giây vào khoảng trống trên màn hình (hoặc chụm 2 ngón tay) → Chọn mục \"Tiện ích\" (Widgets).\n" +
-                            "3. Kéo xuống tìm \"Tools Hub\" → Chạm giữ \"Lịch Âm - Dương Tháng\" rồi kéo thả ra màn hình!",
-                        fontSize = 12.5.sp,
-                        lineHeight = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    Text(
-                        text = "Cách 2 (Bật quyền Ghim nhanh tự động cho Vivo / Xiaomi / OPPO):\n" +
-                            "Bấm nút \"Mở Quyền Ứng Dụng\" bên dưới → Chọn \"Quyền\" → Bật quyền \"Tạo lối tắt trên màn hình chính\" (Home screen shortcuts), sau đó bấm \"Ghim tự động lại\".",
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                    data = Uri.fromParts("package", context.packageName, null)
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("🔓 Mở Quyền Ứng Dụng (Bật Tạo lối tắt)", fontWeight = FontWeight.Bold, color = AccentCyan, fontSize = 12.sp)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
-                            context = context,
-                            providerClass = LunarCalendarAppWidgetProvider::class.java,
-                            label = "Lịch Âm - Dương (Tools Hub)",
-                            showToastOnRequest = true
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = Color.Black),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("📌 Ghim tự động lại", fontWeight = FontWeight.ExtraBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPinHelperDialog = false }) {
-                    Text("Đóng", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                }
-            }
-        )
     }
 
     Scaffold(
@@ -808,10 +801,14 @@ fun LunarCalendarTool(onExit: () -> Unit) {
             // 1. Nút Ghim Tiện Ích Lịch Âm - Dương Ra Màn Hình Chính (Giống Google Calendar)
             Surface(
                 shape = RoundedCornerShape(18.dp),
-                color = AccentCyan.copy(alpha = 0.14f),
+                color = if (isPinnedOnHome) AccentGreen.copy(alpha = 0.14f) else AccentCyan.copy(alpha = 0.14f),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, AccentCyan.copy(alpha = 0.45f), RoundedCornerShape(18.dp))
+                    .border(
+                        1.dp,
+                        if (isPinnedOnHome) AccentGreen.copy(alpha = 0.45f) else AccentCyan.copy(alpha = 0.45f),
+                        RoundedCornerShape(18.dp)
+                    )
             ) {
                 Row(
                     modifier = Modifier.padding(14.dp),
@@ -823,27 +820,31 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(AccentCyan.copy(alpha = 0.2f))
+                            .background((if (isPinnedOnHome) AccentGreen else AccentCyan).copy(alpha = 0.2f))
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.CalendarMonth,
                             contentDescription = null,
-                            tint = AccentCyan
+                            tint = if (isPinnedOnHome) AccentGreen else AccentCyan
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (activeWidgetCount > 0) {
-                                "✅ Đã ghim $activeWidgetCount Lịch Âm ngoài Màn hình chính"
-                            } else {
-                                "Tiện ích Lịch Âm - Dương ngoài Màn hình chính"
+                            text = when {
+                                activeWidgetCount > 0 -> "✅ Đã ghim Bảng Lịch Âm ngoài Màn hình chính"
+                                isShortcutPinned -> "✅ Đã ghim Lịch Âm - Dương ngoài Màn hình chính"
+                                else -> "Tiện ích Lịch Âm - Dương ngoài Màn hình chính"
                             },
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.5.sp,
-                            color = if (activeWidgetCount > 0) AccentGreen else AccentCyan
+                            color = if (isPinnedOnHome) AccentGreen else AccentCyan
                         )
                         Text(
-                            text = "Hiển thị nguyên bảng lịch tháng Âm - Dương + Giờ tốt giống Google Calendar ngay ngoài màn hình chính!",
+                            text = if (activeWidgetCount > 0) {
+                                "Đang hiển thị bảng lịch tháng Âm - Dương trực tiếp ngoài màn hình chính!"
+                            } else {
+                                "Bấm Ghim Lịch để đặt ra Màn hình chính (hoặc nhấn giữ màn hình chính → Tiện ích → Tools Hub để kéo Bảng Lịch Tháng lớn)."
+                            },
                             fontSize = 11.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -851,16 +852,41 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                     Button(
                         onClick = {
                             LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+                            val beforeWidgets = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
                             ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
                                 context = context,
                                 providerClass = LunarCalendarAppWidgetProvider::class.java,
                                 label = "Lịch Âm - Dương (Tools Hub)",
                                 showToastOnRequest = false
                             )
-                            showPinHelperDialog = true
+                            scope.launch {
+                                delay(550L)
+                                val afterWidgets = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
+                                activeWidgetCount = afterWidgets
+                                if (afterWidgets > beforeWidgets) {
+                                    Toast.makeText(
+                                        context,
+                                        "✅ Đã ghim Bảng Lịch Âm - Dương ra Màn hình chính thành công!",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else if (view.hasWindowFocus()) {
+                                    // Launcher đã chặn requestPinAppWidget -> Dùng ngay quyền "Tạo lối tắt màn hình chính" để ghim Tờ Lịch Âm Động
+                                    val shortcutOk = LunarCalendarAppWidgetProvider.pinLunarShortcutToHomeScreen(context)
+                                    delay(350L)
+                                    isShortcutPinned = LunarCalendarAppWidgetProvider.isLunarShortcutPinned(context)
+                                    activeWidgetCount = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
+                                    if (shortcutOk || isShortcutPinned) {
+                                        Toast.makeText(
+                                            context,
+                                            "✅ Đã ghim Tờ Lịch Âm - Dương ra Màn hình chính thành công!",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AccentCyan,
+                            containerColor = if (isPinnedOnHome) AccentGreen else AccentCyan,
                             contentColor = Color.Black
                         ),
                         shape = RoundedCornerShape(12.dp),
@@ -868,7 +894,11 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                     ) {
                         Icon(Icons.Rounded.PushPin, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Ghim Lịch", fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp)
+                        Text(
+                            if (isPinnedOnHome) "Đã Ghim" else "Ghim Lịch",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.5.sp
+                        )
                     }
                 }
             }

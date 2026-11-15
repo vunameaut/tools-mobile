@@ -524,14 +524,18 @@ private fun HomeScreenWidgetsBanner() {
             )
 
             QuickTileChip(
-                label = "📅 Ghim Tiện Ích Lịch Âm - Dương Tháng (4x3)",
+                label = "📅 Ghim Tiện Ích Lịch Âm - Dương Tháng",
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
+                    val before = LunarCalendarAppWidgetProvider.getActiveWidgetCount(context)
                     ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
                         context,
                         LunarCalendarAppWidgetProvider::class.java,
                         "Lịch Âm - Dương Tháng"
                     )
+                    if (LunarCalendarAppWidgetProvider.getActiveWidgetCount(context) <= before) {
+                        LunarCalendarAppWidgetProvider.pinLunarShortcutToHomeScreen(context)
+                    }
                 }
             )
 

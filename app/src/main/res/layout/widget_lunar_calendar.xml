@@ -91,7 +91,8 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:contentDescription="Lịch Âm Dương"
-        android:scaleType="fitXY" />
+        android:scaleType="fitXY"
+        android:src="@drawable/lunar_widget_preview" />
 
 </LinearLayout>
 

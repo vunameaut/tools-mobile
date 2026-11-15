@@ -6,6 +6,9 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.widget.RemoteViews
 import android.widget.Toast
@@ -30,7 +33,7 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_TOGGLE_TIMER = "com.vunameaut.powertimer.widget.ACTION_TOGGLE_TIMER"
         const val ACTION_PIN_WIDGET_SUCCESS = "com.vunameaut.powertimer.widget.ACTION_PIN_WIDGET_SUCCESS"
-        private const val EXTRA_WIDGET_LABEL = "extra_widget_label"
+        internal const val EXTRA_WIDGET_LABEL = "extra_widget_label"
 
         fun updateAllWidgets(context: Context) {
             val appCtx = context.applicationContext
@@ -136,7 +139,7 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
             context: Context,
             providerClass: Class<out AppWidgetProvider>,
             label: String,
-            showToastOnRequest: Boolean = true
+            showToastOnRequest: Boolean = false
         ): Boolean {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val appWidgetManager = AppWidgetManager.getInstance(context)
@@ -146,38 +149,19 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
                         action = ACTION_PIN_WIDGET_SUCCESS
                         putExtra(EXTRA_WIDGET_LABEL, label)
                     }
-                    val successFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                    } else {
-                        PendingIntent.FLAG_UPDATE_CURRENT
-                    }
                     val successCallback = PendingIntent.getBroadcast(
                         context,
                         label.hashCode(),
                         successIntent,
-                        successFlag
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                     )
                     val pinned = runCatching {
                         appWidgetManager.requestPinAppWidget(myProvider, null, successCallback)
                     }.getOrDefault(false)
                     if (pinned) {
-                        if (showToastOnRequest) {
-                            Toast.makeText(
-                                context,
-                                "Hãy bấm Thêm / Xác nhận trên cửa sổ hệ thống (hoặc bật quyền Tạo lối tắt màn hình chính nếu máy chặn)!",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
                         return true
                     }
                 }
-            }
-            if (showToastOnRequest) {
-                Toast.makeText(
-                    context,
-                    "Nhấn giữ khoảng trống ngoài Màn hình chính -> Chọn Tiện ích (Widgets) -> Kéo \"$label\" ra ngoài!",
-                    Toast.LENGTH_LONG
-                ).show()
             }
             return false
         }
@@ -388,11 +372,14 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
+        private const val SHORTCUT_ID_LUNAR = "lunar_calendar_live_shortcut"
+
         fun refreshAllLunarWidgets(context: Context) {
             val appCtx = context.applicationContext
             val manager = AppWidgetManager.getInstance(appCtx)
             val ids = manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java))
             ids.forEach { id -> updateSingleLunarWidget(appCtx, manager, id) }
+            updateDynamicLunarShortcutIfPinned(appCtx)
         }
 
         fun getActiveWidgetCount(context: Context): Int {
@@ -401,6 +388,109 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 val manager = AppWidgetManager.getInstance(appCtx)
                 manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java)).size
             }.getOrDefault(0)
+        }
+
+        fun isLunarShortcutPinned(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+            return runCatching {
+                val sm = context.getSystemService(ShortcutManager::class.java) ?: return false
+                sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }
+            }.getOrDefault(false)
+        }
+
+        private fun buildLiveLunarShortcutInfo(context: Context): ShortcutInfo? {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+            val todayCal = Calendar.getInstance()
+            val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+            val todayMonth = todayCal.get(Calendar.MONTH) + 1
+            val todayYear = todayCal.get(Calendar.YEAR)
+            val todayInfo = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+
+            val iconBmp = VietnameseLunarCalendar.renderLiveShortcutIconBitmap()
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("OPEN_TOOL_ID", "lunar_calendar")
+            }
+            val shortLabel = String.format("Lịch Âm %02d/%02d", todayInfo.lunarDay, todayInfo.lunarMonth)
+            val longLabel = String.format(
+                "Lịch Âm %02d/%02d (%02d/%02d DL)",
+                todayInfo.lunarDay,
+                todayInfo.lunarMonth,
+                todayDay,
+                todayMonth
+            )
+            return ShortcutInfo.Builder(context, SHORTCUT_ID_LUNAR)
+                .setShortLabel(shortLabel)
+                .setLongLabel(longLabel)
+                .setIcon(Icon.createWithBitmap(iconBmp))
+                .setIntent(launchIntent)
+                .build()
+        }
+
+        fun updateDynamicLunarShortcutIfPinned(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            runCatching {
+                val sm = context.getSystemService(ShortcutManager::class.java) ?: return
+                if (sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }) {
+                    val info = buildLiveLunarShortcutInfo(context) ?: return
+                    sm.updateShortcuts(listOf(info))
+                }
+            }
+        }
+
+        /**
+         * Ghim Tờ Lịch Âm - Dương Động (biểu tượng hiển thị trực tiếp ngày Âm/Dương hôm nay)
+         * ra Màn hình chính thông qua quyền "Tạo lối tắt trên màn hình chính" (ShortcutManager + INSTALL_SHORTCUT).
+         */
+        fun pinLunarShortcutToHomeScreen(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val sm = context.getSystemService(ShortcutManager::class.java)
+                val info = buildLiveLunarShortcutInfo(context)
+                if (sm != null && info != null) {
+                    runCatching { sm.updateShortcuts(listOf(info)) }
+                    if (sm.pinnedShortcuts.any { it.id == SHORTCUT_ID_LUNAR }) {
+                        return true
+                    }
+                    if (sm.isRequestPinShortcutSupported) {
+                        val successIntent = Intent(context, ToolsHubAppWidgetProvider::class.java).apply {
+                            action = ToolsHubAppWidgetProvider.ACTION_PIN_WIDGET_SUCCESS
+                            putExtra(ToolsHubAppWidgetProvider.EXTRA_WIDGET_LABEL, "Lịch Âm - Dương")
+                        }
+                        val callback = PendingIntent.getBroadcast(
+                            context,
+                            SHORTCUT_ID_LUNAR.hashCode(),
+                            successIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                        val requested = runCatching {
+                            sm.requestPinShortcut(info, callback.intentSender)
+                        }.getOrDefault(false)
+                        if (requested) return true
+                    }
+                }
+            }
+            return runCatching {
+                val todayCal = Calendar.getInstance()
+                val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+                val todayMonth = todayCal.get(Calendar.MONTH) + 1
+                val todayYear = todayCal.get(Calendar.YEAR)
+                val todayInfo = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+                val launchIntent = Intent(context, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    putExtra("OPEN_TOOL_ID", "lunar_calendar")
+                }
+                @Suppress("DEPRECATION")
+                val addIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
+                    putExtra("duplicate", false)
+                    putExtra(Intent.EXTRA_SHORTCUT_NAME, String.format("Lịch Âm %02d/%02d", todayInfo.lunarDay, todayInfo.lunarMonth))
+                    putExtra(Intent.EXTRA_SHORTCUT_ICON, VietnameseLunarCalendar.renderLiveShortcutIconBitmap())
+                    putExtra(Intent.EXTRA_SHORTCUT_INTENT, launchIntent)
+                }
+                context.sendBroadcast(addIntent)
+                true
+            }.getOrDefault(false)
         }
     }
 
