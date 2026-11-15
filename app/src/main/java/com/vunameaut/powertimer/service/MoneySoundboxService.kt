@@ -36,10 +36,21 @@ import java.util.Locale
 import kotlin.math.exp
 import kotlin.math.sin
 
+enum class BankTxDirection {
+    INCOMING, // Nhận được (+)
+    OUTGOING  // Chuyển đi / Trừ tiền (-)
+}
+
+data class ParsedBankTransaction(
+    val direction: BankTxDirection,
+    val amount: Long
+)
+
 data class SoundboxTransaction(
     val id: Long = System.currentTimeMillis(),
     val sourceApp: String,
     val amount: Long,
+    val isOutgoing: Boolean = false,
     val rawMessage: String,
     val timestamp: Long = System.currentTimeMillis()
 )
@@ -52,6 +63,7 @@ data class ScannedNotificationItem(
     val body: String,
     val parsedAmount: Long?,
     val isIncomingMoney: Boolean,
+    val isOutgoingMoney: Boolean = false,
     val isKnownBankApp: Boolean,
     val postTime: Long
 )
@@ -248,6 +260,7 @@ class MoneySoundboxService : NotificationListenerService() {
                                 id = o.optLong("id", i.toLong()),
                                 sourceApp = o.optString("sourceApp", "Ngân hàng"),
                                 amount = o.optLong("amount", 0L),
+                                isOutgoing = o.optBoolean("isOutgoing", false),
                                 rawMessage = o.optString("rawMessage", ""),
                                 timestamp = o.optLong("timestamp", System.currentTimeMillis())
                             )
@@ -270,6 +283,7 @@ class MoneySoundboxService : NotificationListenerService() {
                         put("id", item.id)
                         put("sourceApp", item.sourceApp)
                         put("amount", item.amount)
+                        put("isOutgoing", item.isOutgoing)
                         put("rawMessage", item.rawMessage)
                         put("timestamp", item.timestamp)
                     }
@@ -341,22 +355,58 @@ class MoneySoundboxService : NotificationListenerService() {
         }
 
         /**
-         * Phân tích nội dung thông báo xem có phải biến động cộng tiền (+VND) không.
-         * Hỗ trợ đầy đủ cả Tiếng Việt có dấu & không dấu từ mọi ngân hàng Việt Nam (VCB, MB, TCB, BIDV, CTG, ACB, TPB, VPB, Agribank, MoMo, ZaloPay...).
+         * Lọc bỏ toàn bộ Số tài khoản (STK/TK) và Số dư (SD/Số dư khả dụng) khỏi chuỗi thông báo
+         * để tuyệt đối KHÔNG BAO GIỜ đọc nhầm số tài khoản hay số dư còn lại.
          */
-        fun parseIncomingMoneyAmount(title: String, body: String): Long? {
-            val combined = "$title $body".replace('\n', ' ').trim()
-            if (combined.isBlank()) return null
+        private fun stripAccountAndBalanceNoise(raw: String): String {
+            var cleaned = raw.replace('\n', ' ').trim()
+            if (cleaned.isBlank()) return ""
 
-            // 1. Mẫu có dấu cộng (+150,000 VND, + 150.000đ, PS:+50,000, GD: +200.000VND, +VND 50,000...)
+            // 1. Xóa cụm Số tài khoản (TK / STK / Tài khoản / Thẻ / Card) kèm dãy số/chữ cái che dấu (ví dụ TK VCB 0011001234567, TK 0384xxxx89)
+            cleaned = cleaned.replace(
+                Regex(
+                    """(?:số tài khoản|so tai khoan|tài khoản|tai khoan|\bSTK\b|\bTK\b|\bthẻ\b|\bcard\b)\s*(?:[A-Za-z]{2,12}\s+)?[:#\-]?\s*[0-9xX*]{4,19}""",
+                    RegexOption.IGNORE_CASE
+                ),
+                " "
+            )
+
+            // 2. Xóa cụm Số dư cuối / Số dư khả dụng / SD: <số tiền> (không có dấu +/- đứng trước số tiền giao dịch)
+            cleaned = cleaned.replace(
+                Regex(
+                    """(?:số dư khả dụng|so du kha dung|số dư cuối|so du cuoi|số dư ví|so du vi|số dư|so du|\bSD\b|\bbalance\b|\bBal\b)\s*[:=]?\s*(?:VND|VNĐ|đ|d)?\s*(?![+\-])\d{1,3}(?:[.,]\d{3})+(?:\s*(?:VND|VNĐ|đ|d|đồng))?""",
+                    RegexOption.IGNORE_CASE
+                ),
+                " "
+            )
+            cleaned = cleaned.replace(
+                Regex(
+                    """(?:số dư khả dụng|so du kha dung|số dư cuối|so du cuoi|số dư ví|so du vi|số dư|so du|\bSD\b|\bbalance\b|\bBal\b)\s*[:=]?\s*(?:VND|VNĐ|đ|d)?\s*(?![+\-])\d{4,14}\s*(?:VND|VNĐ|đ|d|đồng)""",
+                    RegexOption.IGNORE_CASE
+                ),
+                " "
+            )
+
+            return cleaned
+        }
+
+        /**
+         * Phân tích giao dịch Ngân hàng / Ví điện tử:
+         * - Trả về chính xác là NHẬN ĐƯỢC (`INCOMING`) hay CHUYỂN ĐI (`OUTGOING`) và SỐ TIỀN GIAO DỊCH.
+         * - Đã lọc bỏ hoàn toàn Số tài khoản (STK) và Số dư (SD) để không bao giờ lấy nhầm.
+         */
+        fun parseBankTransaction(title: String, body: String): ParsedBankTransaction? {
+            val cleaned = stripAccountAndBalanceNoise("$title $body")
+            if (cleaned.isBlank()) return null
+
+            // 1. Mẫu có dấu cộng rõ ràng (+150,000 VND, + 150.000đ, PS:+50,000, GD: +200.000VND, +VND 50,000...)
             val plusPattern = Regex(
-                """\+\s*(?:VND|VNĐ|đ|d)?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng|\b)?""",
+                """(?<![0-9])\+\s*(?:VND|VNĐ|đ|d)?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng|\b)?""",
                 RegexOption.IGNORE_CASE
             )
-            for (match in plusPattern.findAll(combined)) {
+            for (match in plusPattern.findAll(cleaned)) {
                 val rawNum = match.groupValues[1]
                 val fullMatch = match.value
-                // Bỏ qua mã vùng số điện thoại +84... nếu không có dấu chấm/phẩy phân cách hàng nghìn và không có đơn vị tiền tệ
                 val hasSeparator = rawNum.contains('.') || rawNum.contains(',')
                 val hasCurrency = fullMatch.contains(Regex("""(?:VND|VNĐ|đ|đồng)""", RegexOption.IGNORE_CASE))
                 val digits = rawNum.replace(Regex("[^0-9]"), "")
@@ -364,65 +414,88 @@ class MoneySoundboxService : NotificationListenerService() {
                     continue
                 }
                 val value = digits.toLongOrNull() ?: 0L
-                if (value in 1_000L..50_000_000_000L) return value
+                if (value in 1_000L..50_000_000_000L) {
+                    return ParsedBankTransaction(BankTxDirection.INCOMING, value)
+                }
             }
 
-            // 2. Mẫu ví điện tử / ngân hàng bằng lời (có dấu & không dấu):
-            // "nhận được 150.000đ", "vua nhan 50,000 VND", "cộng 200.000đ", "tăng 100,000 VND", "ghi có 500,000 VND", "tiền vào 300.000đ"
-            val verbalPattern = Regex(
-                """(?:nhận được|nhan duoc|vừa nhận|vua nhan|đã nhận|da nhan|nhận tiền|nhan tien|nhận thành công|nhan thanh cong|cộng thêm|cong them|được cộng|duoc cong|cộng|cong|chuyển đến|chuyen den|tiền vào|tien vao|ghi có|ghi co|tăng|tang)[^0-9+\-]{0,25}\+?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng)?""",
+            // 2. Mẫu có dấu trừ rõ ràng (-50,000 VND, - 50.000đ, PS:-50,000, GD: -200.000VND, -VND 50,000...)
+            val minusPattern = Regex(
+                """(?<![0-9/.\-])-\s*(?:VND|VNĐ|đ|d)?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng|\b)?""",
                 RegexOption.IGNORE_CASE
             )
-            val verbalMatch = verbalPattern.find(combined)
-            if (verbalMatch != null) {
-                val digits = verbalMatch.groupValues[1].replace(Regex("[^0-9]"), "")
+            for (match in minusPattern.findAll(cleaned)) {
+                val rawNum = match.groupValues[1]
+                val fullMatch = match.value
+                val hasSeparator = rawNum.contains('.') || rawNum.contains(',')
+                val hasCurrency = fullMatch.contains(Regex("""(?:VND|VNĐ|đ|đồng)""", RegexOption.IGNORE_CASE))
+                if (!hasSeparator && !hasCurrency) continue
+                val digits = rawNum.replace(Regex("[^0-9]"), "")
                 val value = digits.toLongOrNull() ?: 0L
-                if (value in 1_000L..50_000_000_000L) return value
+                if (value in 1_000L..50_000_000_000L) {
+                    return ParsedBankTransaction(BankTxDirection.OUTGOING, value)
+                }
             }
 
-            // 3. Mẫu thông báo "Biến động số dư" / "Số tiền:" / "GD:" / "PS:" không có dấu trừ (-) hoặc từ khóa trừ tiền
-            val hasBankBalanceTrigger = combined.contains(
+            // 3. Mẫu bằng lời CHUYỂN ĐI / TRỪ TIỀN ("đã chuyển 200.000đ", "bị trừ 50,000 VND", "thanh toán 100.000đ", "chuyển đi 300.000đ")
+            val verbalOutgoingPattern = Regex(
+                """(?:chuyển đi|chuyen di|đã chuyển|da chuyen|vừa chuyển|vua chuyen|chuyển thành công|chuyen thanh cong|chuyển khoản thành công|chuyen khoan thanh cong|thanh toán thành công|thanh toan thanh cong|đã thanh toán|da thanh toan|thanh toán|thanh toan|bị trừ|bi tru|đã trừ|da tru|\btrừ\b|\bgiam\b|\bgiảm\b|rút tiền|rut tien|ghi nợ|ghi no)[^0-9+\-]{0,25}-?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng)?""",
+                RegexOption.IGNORE_CASE
+            )
+            val verbalOutMatch = verbalOutgoingPattern.find(cleaned)
+            if (verbalOutMatch != null) {
+                val digits = verbalOutMatch.groupValues[1].replace(Regex("[^0-9]"), "")
+                val value = digits.toLongOrNull() ?: 0L
+                if (value in 1_000L..50_000_000_000L) {
+                    return ParsedBankTransaction(BankTxDirection.OUTGOING, value)
+                }
+            }
+
+            // 4. Mẫu bằng lời NHẬN TIỀN ("nhận được 150.000đ", "vừa nhận 50,000 VND", "cộng 200.000đ", "tiền vào 300.000đ", "ghi có 500,000 VND")
+            val verbalIncomingPattern = Regex(
+                """(?:nhận được|nhan duoc|vừa nhận|vua nhan|đã nhận|da nhan|nhận tiền|nhan tien|nhận thành công|nhan thanh cong|cộng thêm|cong them|được cộng|duoc cong|\bcộng\b|\bcong\b|chuyển đến|chuyen den|tiền vào|tien vao|ghi có|ghi co|\btăng\b|\btang\b)[^0-9+\-]{0,25}\+?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng)?""",
+                RegexOption.IGNORE_CASE
+            )
+            val verbalInMatch = verbalIncomingPattern.find(cleaned)
+            if (verbalInMatch != null) {
+                val digits = verbalInMatch.groupValues[1].replace(Regex("[^0-9]"), "")
+                val value = digits.toLongOrNull() ?: 0L
+                if (value in 1_000L..50_000_000_000L) {
+                    return ParsedBankTransaction(BankTxDirection.INCOMING, value)
+                }
+            }
+
+            // 5. Dự phòng cho thông báo "Biến động số dư" / "Số tiền GD:" (sau khi đã xóa sạch STK & Số dư ở trên)
+            val hasBankTrigger = cleaned.contains(
                 Regex("""(?:biến động số dư|bien dong so du|số tiền|so tien|giao dịch|giao dich|\bGD\s*:|\bPS\s*:)""", RegexOption.IGNORE_CASE)
             )
-            val hasOutgoingKeyword = combined.contains(
-                Regex("""(?:-\s*\d|\btrừ\b|\bgiam\b|\bgiảm\b|thanh toán|thanh toan|chuyển đi|chuyen di|rút tiền|rut tien)""", RegexOption.IGNORE_CASE)
-            )
-            if (hasBankBalanceTrigger && !hasOutgoingKeyword) {
+            if (hasBankTrigger) {
                 val fallbackCurrencyPattern = Regex(
                     """(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|đồng)""",
                     RegexOption.IGNORE_CASE
                 )
-                val fbMatch = fallbackCurrencyPattern.find(combined)
+                val fbMatch = fallbackCurrencyPattern.find(cleaned)
                 if (fbMatch != null) {
                     val digits = fbMatch.groupValues[1].replace(Regex("[^0-9]"), "")
                     val value = digits.toLongOrNull() ?: 0L
-                    if (value in 1_000L..50_000_000_000L) return value
+                    if (value in 1_000L..50_000_000_000L) {
+                        val isOut = cleaned.contains(
+                            Regex("""(?:\btrừ\b|\bgiam\b|\bgiảm\b|thanh toán|thanh toan|chuyển đi|chuyen di|rút tiền|rut tien)""", RegexOption.IGNORE_CASE)
+                        )
+                        return ParsedBankTransaction(
+                            if (isOut) BankTxDirection.OUTGOING else BankTxDirection.INCOMING,
+                            value
+                        )
+                    }
                 }
             }
 
             return null
         }
 
-        /**
-         * Tách bất kỳ số tiền nào có trong thông báo ngân hàng (phục vụ nút "Đọc thông báo ngân hàng hiện tại"
-         * để người dùng test ngay cả khi thông báo hiện tại trên thanh trạng thái là thông báo số dư hoặc trừ tiền).
-         */
-        fun parseAnyMoneyAmount(title: String, body: String): Long? {
-            parseIncomingMoneyAmount(title, body)?.let { return it }
-            val combined = "$title $body".replace('\n', ' ').trim()
-            if (combined.isBlank()) return null
-
-            val currencyPattern = Regex(
-                """[+\-]?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,12})\s*(?:VND|VNĐ|đ|d|đồng)\b""",
-                RegexOption.IGNORE_CASE
-            )
-            val match = currencyPattern.find(combined)
-            if (match != null) {
-                val digits = match.groupValues[1].replace(Regex("[^0-9]"), "")
-                val value = digits.toLongOrNull() ?: 0L
-                if (value in 1_000L..50_000_000_000L) return value
-            }
-            return null
+        fun parseIncomingMoneyAmount(title: String, body: String): Long? {
+            val tx = parseBankTransaction(title, body) ?: return null
+            return if (tx.direction == BankTxDirection.INCOMING) tx.amount else null
         }
 
         fun detectBankNameFromContent(content: String, fallbackLabel: String = "Tài khoản"): String {
@@ -511,8 +584,7 @@ class MoneySoundboxService : NotificationListenerService() {
                     continue
                 }
 
-                val incomingAmount = parseIncomingMoneyAmount(title, body)
-                val anyAmount = incomingAmount ?: parseAnyMoneyAmount(title, body)
+                val bankTx = parseBankTransaction(title, body)
                 val isBank = isBankRelatedNotification(pkg, title, body)
                 val appName = resolveAppDisplayName(appCtx, pkg, title, body)
 
@@ -523,41 +595,34 @@ class MoneySoundboxService : NotificationListenerService() {
                         appName = appName,
                         title = title,
                         body = body,
-                        parsedAmount = anyAmount,
-                        isIncomingMoney = incomingAmount != null,
+                        parsedAmount = bankTx?.amount,
+                        isIncomingMoney = bankTx?.direction == BankTxDirection.INCOMING,
+                        isOutgoingMoney = bankTx?.direction == BankTxDirection.OUTGOING,
                         isKnownBankApp = isBank,
                         postTime = sbn.postTime
                     )
                 )
             }
 
-            // Sắp xếp ưu tiên: Thông báo cộng tiền (+) -> Thông báo Ngân hàng có số tiền -> Thông báo Ngân hàng -> Các thông báo khác (mới nhất lên đầu)
+            // Sắp xếp ưu tiên: Thông báo có số tiền giao dịch (+ hoặc -) -> Thông báo Ngân hàng -> Các thông báo khác (mới nhất lên đầu)
             val sorted = items.sortedWith(
-                compareByDescending<ScannedNotificationItem> { it.isIncomingMoney }
-                    .thenByDescending { it.isKnownBankApp && it.parsedAmount != null }
-                    .thenByDescending { it.parsedAmount != null }
+                compareByDescending<ScannedNotificationItem> { it.parsedAmount != null }
+                    .thenByDescending { it.isIncomingMoney }
                     .thenByDescending { it.isKnownBankApp }
                     .thenByDescending { it.postTime }
             )
 
             if (autoSpeakBestMatch) {
-                val best = sorted.firstOrNull { it.isIncomingMoney || it.isKnownBankApp || it.parsedAmount != null }
-                if (best != null) {
-                    if (best.parsedAmount != null) {
-                        announceMoneyReceived(
-                            context = appCtx,
-                            amount = best.parsedAmount,
-                            sourceApp = best.appName,
-                            rawMessage = "${best.title}: ${best.body}".trim(':', ' '),
-                            saveToHistory = true
-                        )
-                    } else {
-                        announceCustomNotificationText(
-                            context = appCtx,
-                            sourceApp = best.appName,
-                            rawMessage = "${best.title}. ${best.body}".trim('.', ' ')
-                        )
-                    }
+                val best = sorted.firstOrNull { it.parsedAmount != null }
+                if (best != null && best.parsedAmount != null) {
+                    announceMoneyReceived(
+                        context = appCtx,
+                        amount = best.parsedAmount,
+                        sourceApp = best.appName,
+                        rawMessage = "${best.title}: ${best.body}".trim(':', ' '),
+                        saveToHistory = true,
+                        isOutgoing = best.isOutgoingMoney
+                    )
                 }
             }
 
@@ -565,10 +630,12 @@ class MoneySoundboxService : NotificationListenerService() {
         }
 
         /**
-         * Chuyển số tiền sang câu đọc tiếng Việt tự nhiên như loa Soundbox cửa hàng.
-         * Ví dụ: 150000 -> "150 nghìn đồng", 1250000 -> "1 triệu 250 nghìn đồng"
+         * Chuyển số tiền sang câu đọc tiếng Việt ngắn gọn, rõ ràng:
+         * - Nhận tiền: "Nhận được 150 nghìn đồng"
+         * - Chuyển đi: "Chuyển đi 50 nghìn đồng"
+         * Tuyệt đối KHÔNG đọc số tài khoản (STK) hay số dư còn lại.
          */
-        fun formatVndForSpeech(amount: Long, sourceApp: String): String {
+        fun formatVndForSpeech(amount: Long, isOutgoing: Boolean = false): String {
             val ty = amount / 1_000_000_000L
             val trieu = (amount % 1_000_000_000L) / 1_000_000L
             val nghin = (amount % 1_000_000L) / 1_000L
@@ -581,15 +648,15 @@ class MoneySoundboxService : NotificationListenerService() {
             if (le > 0 || parts.isEmpty()) parts.add("$le")
 
             val amountWords = parts.joinToString(" ") + " đồng"
-            return if (sourceApp.isNotBlank() && sourceApp != "Thử nghiệm") {
-                "Đã nhận $amountWords vào $sourceApp"
+            return if (isOutgoing) {
+                "Chuyển đi $amountWords"
             } else {
-                "Đã nhận $amountWords"
+                "Nhận được $amountWords"
             }
         }
 
         /**
-         * Phát tiếng chuông Ting-Ting + Đọc to số tiền qua kênh MEDIA (STREAM_MUSIC)
+         * Phát tiếng chuông Ting-Ting + Đọc to số tiền nhận được hoặc chuyển đi qua kênh MEDIA (STREAM_MUSIC)
          * để đảm bảo 100% phát ra tiếng kể cả khi điện thoại đang để chế độ Rung / Im lặng thông báo.
          */
         fun announceMoneyReceived(
@@ -597,7 +664,8 @@ class MoneySoundboxService : NotificationListenerService() {
             amount: Long,
             sourceApp: String,
             rawMessage: String,
-            saveToHistory: Boolean = true
+            saveToHistory: Boolean = true,
+            isOutgoing: Boolean = false
         ) {
             val appCtx = context.applicationContext
             lastAnnouncedTimestampMs = System.currentTimeMillis()
@@ -609,12 +677,13 @@ class MoneySoundboxService : NotificationListenerService() {
                     SoundboxTransaction(
                         sourceApp = sourceApp,
                         amount = amount,
+                        isOutgoing = isOutgoing,
                         rawMessage = rawMessage
                     )
                 )
             }
 
-            val speechText = formatVndForSpeech(amount, sourceApp)
+            val speechText = formatVndForSpeech(amount, isOutgoing = isOutgoing)
             val rate = getSpeechRate(appCtx)
 
             soundboxScope.launch {
@@ -922,11 +991,11 @@ class MoneySoundboxService : NotificationListenerService() {
         val allowAllApps = isAllAppsMode(applicationContext)
         if (!isSimulatedSelfBankNotif && knownBankName == null && !allowAllApps) return
 
-        val amount = parseIncomingMoneyAmount(title, body) ?: return
+        val bankTx = parseBankTransaction(title, body) ?: return
         val bankLabel = knownBankName ?: detectBankNameFromContent("$title $body")
 
         // Chống đọc lặp khi 1 thông báo cập nhật liên tiếp trong 3.5 giây (trừ thông báo bắn thử)
-        val dedupeKey = "$pkg:$amount:${body.take(30)}"
+        val dedupeKey = "$pkg:${bankTx.direction}:${bankTx.amount}"
         val now = System.currentTimeMillis()
         if (!isSimulatedSelfBankNotif && dedupeKey == lastDedupeKey && (now - lastDedupeTimeMs) < 3500L) {
             return
@@ -936,10 +1005,11 @@ class MoneySoundboxService : NotificationListenerService() {
 
         announceMoneyReceived(
             context = applicationContext,
-            amount = amount,
+            amount = bankTx.amount,
             sourceApp = bankLabel,
             rawMessage = "$title: $body".trim(':', ' '),
-            saveToHistory = true
+            saveToHistory = true,
+            isOutgoing = bankTx.direction == BankTxDirection.OUTGOING
         )
     }
 }

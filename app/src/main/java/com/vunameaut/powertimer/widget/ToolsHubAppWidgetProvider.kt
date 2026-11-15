@@ -29,6 +29,8 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val ACTION_TOGGLE_TIMER = "com.vunameaut.powertimer.widget.ACTION_TOGGLE_TIMER"
+        const val ACTION_PIN_WIDGET_SUCCESS = "com.vunameaut.powertimer.widget.ACTION_PIN_WIDGET_SUCCESS"
+        private const val EXTRA_WIDGET_LABEL = "extra_widget_label"
 
         fun updateAllWidgets(context: Context) {
             val appCtx = context.applicationContext
@@ -133,28 +135,51 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
         fun requestPinWidgetToHomeScreen(
             context: Context,
             providerClass: Class<out AppWidgetProvider>,
-            label: String
-        ) {
+            label: String,
+            showToastOnRequest: Boolean = true
+        ): Boolean {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val appWidgetManager = AppWidgetManager.getInstance(context)
                 if (appWidgetManager.isRequestPinAppWidgetSupported) {
                     val myProvider = ComponentName(context, providerClass)
-                    val pinned = appWidgetManager.requestPinAppWidget(myProvider, null, null)
+                    val successIntent = Intent(context, ToolsHubAppWidgetProvider::class.java).apply {
+                        action = ACTION_PIN_WIDGET_SUCCESS
+                        putExtra(EXTRA_WIDGET_LABEL, label)
+                    }
+                    val successFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                    } else {
+                        PendingIntent.FLAG_UPDATE_CURRENT
+                    }
+                    val successCallback = PendingIntent.getBroadcast(
+                        context,
+                        label.hashCode(),
+                        successIntent,
+                        successFlag
+                    )
+                    val pinned = runCatching {
+                        appWidgetManager.requestPinAppWidget(myProvider, null, successCallback)
+                    }.getOrDefault(false)
                     if (pinned) {
-                        Toast.makeText(
-                            context,
-                            "Xác nhận để thêm tiện ích \"$label\" ra Màn hình chính!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        return
+                        if (showToastOnRequest) {
+                            Toast.makeText(
+                                context,
+                                "Hãy bấm Thêm / Xác nhận trên cửa sổ hệ thống (hoặc bật quyền Tạo lối tắt màn hình chính nếu máy chặn)!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return true
                     }
                 }
             }
-            Toast.makeText(
-                context,
-                "Nhấn giữ khoảng trống ngoài Màn hình chính -> Chọn Tiện ích (Widgets) -> Kéo \"$label\" ra ngoài!",
-                Toast.LENGTH_LONG
-            ).show()
+            if (showToastOnRequest) {
+                Toast.makeText(
+                    context,
+                    "Nhấn giữ khoảng trống ngoài Màn hình chính -> Chọn Tiện ích (Widgets) -> Kéo \"$label\" ra ngoài!",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return false
         }
     }
 
@@ -170,20 +195,31 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        if (intent.action == ACTION_TOGGLE_TIMER) {
-            val current = TimerForegroundService.timerFlow.value
-            if (current.isRunning) {
-                TimerForegroundService.stopTimer(context)
-                Toast.makeText(context, "Đã tắt hẹn giờ màn hình!", Toast.LENGTH_SHORT).show()
-            } else {
-                TimerForegroundService.startTimer(
-                    context = context,
-                    seconds = 30 * 60L,
-                    mode = ShutdownMode.BANK_SAFE_SLEEP
-                )
-                Toast.makeText(context, "Đã bật hẹn giờ tắt màn hình 30 phút!", Toast.LENGTH_SHORT).show()
+        when (intent.action) {
+            ACTION_TOGGLE_TIMER -> {
+                val current = TimerForegroundService.timerFlow.value
+                if (current.isRunning) {
+                    TimerForegroundService.stopTimer(context)
+                    Toast.makeText(context, "Đã tắt hẹn giờ màn hình!", Toast.LENGTH_SHORT).show()
+                } else {
+                    TimerForegroundService.startTimer(
+                        context = context,
+                        seconds = 30 * 60L,
+                        mode = ShutdownMode.BANK_SAFE_SLEEP
+                    )
+                    Toast.makeText(context, "Đã bật hẹn giờ tắt màn hình 30 phút!", Toast.LENGTH_SHORT).show()
+                }
+                updateAllWidgets(context)
             }
-            updateAllWidgets(context)
+            ACTION_PIN_WIDGET_SUCCESS -> {
+                val label = intent.getStringExtra(EXTRA_WIDGET_LABEL) ?: "Tiện ích"
+                updateAllWidgets(context)
+                Toast.makeText(
+                    context,
+                    "✅ Đã ghim \"$label\" ra Màn hình chính thành công!",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 }
@@ -357,6 +393,14 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             val manager = AppWidgetManager.getInstance(appCtx)
             val ids = manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java))
             ids.forEach { id -> updateSingleLunarWidget(appCtx, manager, id) }
+        }
+
+        fun getActiveWidgetCount(context: Context): Int {
+            return runCatching {
+                val appCtx = context.applicationContext
+                val manager = AppWidgetManager.getInstance(appCtx)
+                manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java)).size
+            }.getOrDefault(0)
         }
     }
 

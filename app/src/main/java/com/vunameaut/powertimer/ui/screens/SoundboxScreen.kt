@@ -136,7 +136,7 @@ fun SoundboxTool(onExit: () -> Unit) {
             set(Calendar.MILLISECOND, 0)
         }
         val startOfDay = cal.timeInMillis
-        transactions.filter { it.timestamp >= startOfDay }.sumOf { it.amount }
+        transactions.filter { it.timestamp >= startOfDay && !it.isOutgoing }.sumOf { it.amount }
     }
 
     Scaffold(
@@ -455,14 +455,14 @@ fun SoundboxTool(onExit: () -> Unit) {
                                 scannedNotifications = found
                                 isScanning = false
 
-                                val bankMatches = found.count { it.isIncomingMoney || it.isKnownBankApp || it.parsedAmount != null }
+                                val bankMatches = found.count { it.parsedAmount != null }
                                 scanStatusMessage = when {
                                     found.isEmpty() ->
                                         "ℹ️ Hiện không có thông báo nào trên thanh trạng thái. Hãy thử bấm nút \"Bắn thử Thông báo Ngân hàng thật (+500.000đ)\" ở trên rồi bấm quét lại!"
                                     bankMatches > 0 ->
-                                        "✅ Tìm thấy $bankMatches thông báo Ngân hàng / Số dư (trên tổng số ${found.size} thông báo hiện tại) và đang phát loa đọc!"
+                                        "✅ Tìm thấy $bankMatches thông báo biến động số tiền (Nhận vào / Chuyển đi) và đang đọc số tiền giao dịch (không đọc STK hay Số dư)!"
                                     else ->
-                                        "ℹ️ Tìm thấy ${found.size} thông báo trên thanh trạng thái (chưa có thông báo biến động số dư ngân hàng). Bạn có thể bấm nút 🔊 bên cạnh bất kỳ thông báo nào bên dưới để nghe thử!"
+                                        "ℹ️ Tìm thấy ${found.size} thông báo trên thanh trạng thái nhưng chưa có thông báo nhận tiền hay chuyển tiền ngân hàng."
                                 }
                             }
                         },
@@ -581,9 +581,9 @@ fun SoundboxTool(onExit: () -> Unit) {
                                             }
                                             if (item.parsedAmount != null) {
                                                 Text(
-                                                    text = (if (item.isIncomingMoney) "+" else "") +
+                                                    text = (if (item.isOutgoingMoney) "Chuyển đi -" else "Nhận +") +
                                                         NumberFormat.getNumberInstance(Locale("vi", "VN")).format(item.parsedAmount) + " đ",
-                                                    color = if (item.isIncomingMoney) AccentGreen else AccentAmber,
+                                                    color = if (item.isOutgoingMoney) AccentAmber else AccentGreen,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     fontFamily = FontFamily.Monospace,
                                                     fontSize = 13.sp
@@ -611,41 +611,36 @@ fun SoundboxTool(onExit: () -> Unit) {
                                         }
                                     }
 
-                                    Button(
-                                        onClick = {
-                                            if (item.parsedAmount != null) {
+                                    if (item.parsedAmount != null) {
+                                        Button(
+                                            onClick = {
                                                 MoneySoundboxService.announceMoneyReceived(
                                                     context = context,
                                                     amount = item.parsedAmount,
                                                     sourceApp = item.appName,
                                                     rawMessage = "${item.title}: ${item.body}".trim(':', ' '),
-                                                    saveToHistory = true
+                                                    saveToHistory = true,
+                                                    isOutgoing = item.isOutgoingMoney
                                                 )
-                                            } else {
-                                                MoneySoundboxService.announceCustomNotificationText(
-                                                    context = context,
-                                                    sourceApp = item.appName,
-                                                    rawMessage = "${item.title}. ${item.body}".trim('.', ' ')
-                                                )
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isHighlight) AccentGreen else AccentCyan,
-                                            contentColor = Color.Black
-                                        ),
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                        modifier = Modifier
-                                            .padding(start = 8.dp)
-                                            .height(36.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
-                                            contentDescription = "Đọc thông báo này",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Đọc", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (item.isOutgoingMoney) AccentAmber else AccentGreen,
+                                                contentColor = Color.Black
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                            modifier = Modifier
+                                                .padding(start = 8.dp)
+                                                .height(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
+                                                contentDescription = "Đọc số tiền giao dịch",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Đọc", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }
@@ -848,11 +843,12 @@ fun SoundboxTool(onExit: () -> Unit) {
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = "+" + NumberFormat.getNumberInstance(Locale("vi", "VN")).format(tx.amount) + " đ",
-                                    color = AccentGreen,
+                                    text = (if (tx.isOutgoing) "Chuyển đi -" else "Nhận được +") +
+                                        NumberFormat.getNumberInstance(Locale("vi", "VN")).format(tx.amount) + " đ",
+                                    color = if (tx.isOutgoing) AccentAmber else AccentGreen,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 17.sp
+                                    fontSize = 16.5.sp
                                 )
                                 if (tx.rawMessage.isNotBlank()) {
                                     Text(
@@ -871,7 +867,8 @@ fun SoundboxTool(onExit: () -> Unit) {
                                         amount = tx.amount,
                                         sourceApp = tx.sourceApp,
                                         rawMessage = tx.rawMessage,
-                                        saveToHistory = false
+                                        saveToHistory = false,
+                                        isOutgoing = tx.isOutgoing
                                     )
                                 }
                             ) {
