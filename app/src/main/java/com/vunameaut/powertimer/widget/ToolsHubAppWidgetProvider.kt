@@ -20,6 +20,11 @@ import com.vunameaut.powertimer.qr.VietQrHelper
 import com.vunameaut.powertimer.service.QuickTileActions
 import com.vunameaut.powertimer.service.TimerForegroundService
 import com.vunameaut.powertimer.ui.screens.VietnameseLunarCalendar
+import com.vunameaut.powertimer.weather.WeatherAtmosphere
+import com.vunameaut.powertimer.weather.WeatherManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 /**
@@ -620,6 +625,8 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
             blocIds.forEach { id -> LunarDayBlocAppWidgetProvider.updateSingleBlocWidget(appCtx, manager, id) }
             val stripIds = manager.getAppWidgetIds(ComponentName(appCtx, LunarCompactStripAppWidgetProvider::class.java))
             stripIds.forEach { id -> LunarCompactStripAppWidgetProvider.updateSingleStripWidget(appCtx, manager, id) }
+            val lwIds = manager.getAppWidgetIds(ComponentName(appCtx, LunarWeatherAppWidgetProvider::class.java))
+            lwIds.forEach { id -> LunarWeatherAppWidgetProvider.updateSingleLunarWeatherWidget(appCtx, manager, id) }
             updateDynamicLunarShortcutIfPinned(appCtx)
         }
 
@@ -629,7 +636,8 @@ class LunarCalendarAppWidgetProvider : AppWidgetProvider() {
                 val manager = AppWidgetManager.getInstance(appCtx)
                 manager.getAppWidgetIds(ComponentName(appCtx, LunarCalendarAppWidgetProvider::class.java)).size +
                     manager.getAppWidgetIds(ComponentName(appCtx, LunarDayBlocAppWidgetProvider::class.java)).size +
-                    manager.getAppWidgetIds(ComponentName(appCtx, LunarCompactStripAppWidgetProvider::class.java)).size
+                    manager.getAppWidgetIds(ComponentName(appCtx, LunarCompactStripAppWidgetProvider::class.java)).size +
+                    manager.getAppWidgetIds(ComponentName(appCtx, LunarWeatherAppWidgetProvider::class.java)).size
             }.getOrDefault(0)
         }
 
@@ -949,6 +957,294 @@ class LunarCompactStripAppWidgetProvider : AppWidgetProvider() {
         super.onReceive(context, intent)
         when (intent.action) {
             Intent.ACTION_DATE_CHANGED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+            }
+        }
+    }
+}
+
+/**
+ * Kiểu Widget 4 (MỚI): Tiện Ích Tích Hợp Thời Tiết + Lịch Âm Dương (4x3).
+ * - Phần trên hiển thị Thời tiết hiện tại (chạm để mở thẳng Trang Thời Tiết).
+ * - Phần dưới là bảng Lịch Âm - Dương Tháng đầy đủ như cũ.
+ * - Background toàn Widget tự động thay đổi theo đúng thời tiết hiện tại.
+ */
+class LunarWeatherAppWidgetProvider : AppWidgetProvider() {
+
+    companion object {
+        const val ACTION_REFRESH_WEATHER = "com.vunameaut.powertimer.widget.ACTION_LW_REFRESH_WEATHER"
+        const val ACTION_PREV_MONTH = "com.vunameaut.powertimer.widget.ACTION_LW_PREV_MONTH"
+        const val ACTION_NEXT_MONTH = "com.vunameaut.powertimer.widget.ACTION_LW_NEXT_MONTH"
+        const val ACTION_TODAY_MONTH = "com.vunameaut.powertimer.widget.ACTION_LW_TODAY_MONTH"
+        private const val PREF_LW = "lunar_weather_widget_prefs"
+        private const val KEY_OFFSET_MONTHS = "viewing_month_offset"
+
+        private val CELL_IDS = intArrayOf(
+            R.id.cell_0, R.id.cell_1, R.id.cell_2, R.id.cell_3, R.id.cell_4, R.id.cell_5, R.id.cell_6
+        )
+        private val SOLAR_IDS = intArrayOf(
+            R.id.solar_0, R.id.solar_1, R.id.solar_2, R.id.solar_3, R.id.solar_4, R.id.solar_5, R.id.solar_6
+        )
+        private val LUNAR_IDS = intArrayOf(
+            R.id.lunar_0, R.id.lunar_1, R.id.lunar_2, R.id.lunar_3, R.id.lunar_4, R.id.lunar_5, R.id.lunar_6
+        )
+        private val DOW_IDS = intArrayOf(
+            R.id.widget_lw_dow_0, R.id.widget_lw_dow_1, R.id.widget_lw_dow_2,
+            R.id.widget_lw_dow_3, R.id.widget_lw_dow_4, R.id.widget_lw_dow_5, R.id.widget_lw_dow_6
+        )
+
+        fun backgroundResForAtmosphere(atmosphere: WeatherAtmosphere): Int {
+            return when (atmosphere) {
+                WeatherAtmosphere.CLEAR_DAY -> R.drawable.widget_weather_bg_clear_day
+                WeatherAtmosphere.HOT_SUNNY -> R.drawable.widget_weather_bg_hot
+                WeatherAtmosphere.CLEAR_NIGHT -> R.drawable.widget_weather_bg_clear_night
+                WeatherAtmosphere.PARTLY_CLOUDY -> R.drawable.widget_weather_bg_partly_cloudy
+                WeatherAtmosphere.CLOUDY -> R.drawable.widget_weather_bg_cloudy
+                WeatherAtmosphere.FOG -> R.drawable.widget_weather_bg_fog
+                WeatherAtmosphere.RAIN -> R.drawable.widget_weather_bg_rain
+                WeatherAtmosphere.STORM -> R.drawable.widget_weather_bg_storm
+            }
+        }
+
+        internal fun updateSingleLunarWeatherWidget(
+            context: Context,
+            appWidgetManager: AppWidgetManager,
+            appWidgetId: Int
+        ) {
+            val prefs = context.getSharedPreferences(PREF_LW, Context.MODE_PRIVATE)
+            val monthOffset = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+            val s = LunarWidgetPrefs.getFontSize(context).scale
+            val weather = WeatherManager.getCachedOrDefaultSnapshot(context)
+
+            val todayCal = Calendar.getInstance()
+            val todayDay = todayCal.get(Calendar.DAY_OF_MONTH)
+            val todayMonth = todayCal.get(Calendar.MONTH) + 1
+            val todayYear = todayCal.get(Calendar.YEAR)
+            val todayInfo = VietnameseLunarCalendar.getFullDayInfo(todayDay, todayMonth, todayYear)
+
+            val viewCal = Calendar.getInstance().apply {
+                set(Calendar.DAY_OF_MONTH, 1)
+                add(Calendar.MONTH, monthOffset)
+            }
+            val viewMonth = viewCal.get(Calendar.MONTH) + 1
+            val viewYear = viewCal.get(Calendar.YEAR)
+            val midMonthLunar = VietnameseLunarCalendar.getFullDayInfo(15, viewMonth, viewYear)
+
+            val views = RemoteViews(context.packageName, R.layout.widget_lunar_weather)
+
+            // 1. Background động theo đúng thời tiết hiện tại
+            views.setInt(R.id.widget_lunar_weather_root, "setBackgroundResource", backgroundResForAtmosphere(weather.atmosphere))
+
+            // 2. Phần Thời Tiết phía trên
+            views.setTextViewText(R.id.widget_weather_emoji, weather.emoji)
+            views.setTextViewText(R.id.widget_weather_temp, "${weather.tempC}°")
+            views.setTextViewText(R.id.widget_weather_city_cond, "${weather.cityName} • ${weather.conditionText}")
+            views.setTextViewText(
+                R.id.widget_weather_details,
+                "${weather.minTodayC}°/${weather.maxTodayC}° • 💧${weather.humidityPct}% • 💨${weather.windKmh}km/h"
+            )
+            views.setTextViewTextSize(R.id.widget_weather_temp, TypedValue.COMPLEX_UNIT_SP, 24f * s)
+            views.setTextViewTextSize(R.id.widget_weather_city_cond, TypedValue.COMPLEX_UNIT_SP, 12f * s)
+            views.setTextViewTextSize(R.id.widget_weather_details, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+
+            // Chạm vào phần Thời Tiết -> Mở thẳng Trang Thời Tiết hiện tại
+            val openWeatherPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(context, 3301, "weather_forecast")
+            views.setOnClickPendingIntent(R.id.widget_weather_header_card, openWeatherPi)
+
+            // Nút làm mới thời tiết trên Widget
+            val refreshIntent = Intent(context, LunarWeatherAppWidgetProvider::class.java).apply {
+                action = ACTION_REFRESH_WEATHER
+            }
+            views.setOnClickPendingIntent(
+                R.id.widget_weather_btn_refresh,
+                PendingIntent.getBroadcast(
+                    context,
+                    3302,
+                    refreshIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+
+            // 3. Phần Lịch Âm - Dương phía dưới như cũ
+            views.setTextViewText(
+                R.id.widget_lw_month_title,
+                "🗓️ Tháng $viewMonth / $viewYear • Năm ${midMonthLunar.yearCanChi}"
+            )
+            views.setTextViewText(
+                R.id.widget_lw_today_subtitle,
+                String.format(
+                    "Hôm nay: %02d/%02d DL • %02d/%02d ÂL (%s)",
+                    todayDay,
+                    todayMonth,
+                    todayInfo.lunarDay,
+                    todayInfo.lunarMonth,
+                    if (todayInfo.isHoangDaoDay) "Hoàng Đạo 🟢" else todayInfo.dayCanChi
+                )
+            )
+            views.setTextViewTextSize(R.id.widget_lw_month_title, TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
+            views.setTextViewTextSize(R.id.widget_lw_today_subtitle, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+            views.setTextViewTextSize(R.id.widget_lw_btn_today, TypedValue.COMPLEX_UNIT_SP, 9.5f * s)
+
+            DOW_IDS.forEach { dowId ->
+                views.setTextViewTextSize(dowId, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+            }
+
+            val openCalendarPi = ToolsHubAppWidgetProvider.buildOpenToolPendingIntent(context, 3303, "lunar_calendar")
+            views.removeAllViews(R.id.widget_lw_grid_container)
+
+            val monthCal = Calendar.getInstance().apply {
+                set(viewYear, viewMonth - 1, 1, 12, 0, 0)
+            }
+            val daysInMonth = monthCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+            val firstDow = monthCal.get(Calendar.DAY_OF_WEEK)
+            val leadingEmpty = if (firstDow == Calendar.SUNDAY) 6 else (firstDow - Calendar.MONDAY)
+            val totalCells = leadingEmpty + daysInMonth
+            val numRows = if (totalCells > 35) 6 else 5
+
+            for (row in 0 until numRows) {
+                val rowViews = RemoteViews(context.packageName, R.layout.widget_lunar_row)
+                for (col in 0..6) {
+                    val cellIdx = row * 7 + col
+                    val day = cellIdx - leadingEmpty + 1
+                    val cellId = CELL_IDS[col]
+                    val solarId = SOLAR_IDS[col]
+                    val lunarId = LUNAR_IDS[col]
+
+                    if (day in 1..daysInMonth) {
+                        val info = VietnameseLunarCalendar.getFullDayInfo(day, viewMonth, viewYear)
+                        val isToday = (day == todayDay && viewMonth == todayMonth && viewYear == todayYear)
+                        val isMung1OrRam = (info.lunarDay == 1 || info.lunarDay == 15)
+
+                        rowViews.setTextViewText(solarId, day.toString())
+                        val lunarBase = if (info.lunarDay == 1 || day == 1) "${info.lunarDay}/${info.lunarMonth}" else info.lunarDay.toString()
+                        val lunarDisplay = if (info.isHoangDaoDay && !isToday && !isMung1OrRam) "$lunarBase•" else lunarBase
+                        rowViews.setTextViewText(lunarId, lunarDisplay)
+
+                        val bgRes = when {
+                            isToday -> R.drawable.widget_cell_today_bg
+                            isMung1OrRam -> R.drawable.widget_cell_mung1_bg
+                            else -> R.drawable.widget_cell_normal_bg
+                        }
+                        rowViews.setInt(cellId, "setBackgroundResource", bgRes)
+
+                        val solarColor = when {
+                            isToday -> 0xFFFFFFFF.toInt()
+                            col == 6 -> 0xFFFDA4AF.toInt()
+                            col == 5 -> 0xFF7DD3FC.toInt()
+                            isMung1OrRam -> 0xFFFDE68A.toInt()
+                            else -> 0xFFF8FAFC.toInt()
+                        }
+                        val lunarColor = when {
+                            isToday -> 0xFFFEF08A.toInt()
+                            isMung1OrRam -> 0xFFFBBF24.toInt()
+                            info.isHoangDaoDay -> 0xFF86EFAC.toInt()
+                            else -> 0xFFE2E8F0.toInt()
+                        }
+                        rowViews.setTextColor(solarId, solarColor)
+                        rowViews.setTextColor(lunarId, lunarColor)
+                        rowViews.setTextViewTextSize(solarId, TypedValue.COMPLEX_UNIT_SP, 12f * s)
+                        rowViews.setTextViewTextSize(lunarId, TypedValue.COMPLEX_UNIT_SP, 8.2f * s)
+                        rowViews.setOnClickPendingIntent(cellId, openCalendarPi)
+                    } else {
+                        rowViews.setTextViewText(solarId, "")
+                        rowViews.setTextViewText(lunarId, "")
+                        rowViews.setInt(cellId, "setBackgroundResource", R.drawable.widget_cell_normal_bg)
+                    }
+                }
+                views.addView(R.id.widget_lw_grid_container, rowViews)
+            }
+
+            views.setTextViewText(
+                R.id.widget_lw_footer_canchi,
+                "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • Tháng ${todayInfo.monthCanChi} • Năm ${todayInfo.yearCanChi}"
+            )
+            views.setTextViewText(
+                R.id.widget_lw_footer_hours,
+                "✨ Giờ tốt: " + todayInfo.auspiciousHours.take(4).joinToString(", ")
+            )
+            views.setTextViewTextSize(R.id.widget_lw_footer_canchi, TypedValue.COMPLEX_UNIT_SP, 10f * s)
+            views.setTextViewTextSize(R.id.widget_lw_footer_hours, TypedValue.COMPLEX_UNIT_SP, 9.2f * s)
+
+            // Nút chuyển tháng
+            views.setOnClickPendingIntent(
+                R.id.widget_lw_btn_prev,
+                PendingIntent.getBroadcast(
+                    context,
+                    3304,
+                    Intent(context, LunarWeatherAppWidgetProvider::class.java).apply { action = ACTION_PREV_MONTH },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            views.setOnClickPendingIntent(
+                R.id.widget_lw_btn_today,
+                PendingIntent.getBroadcast(
+                    context,
+                    3305,
+                    Intent(context, LunarWeatherAppWidgetProvider::class.java).apply { action = ACTION_TODAY_MONTH },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            views.setOnClickPendingIntent(
+                R.id.widget_lw_btn_next,
+                PendingIntent.getBroadcast(
+                    context,
+                    3306,
+                    Intent(context, LunarWeatherAppWidgetProvider::class.java).apply { action = ACTION_NEXT_MONTH },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+
+            views.setOnClickPendingIntent(R.id.widget_lw_calendar_header_click, openCalendarPi)
+            views.setOnClickPendingIntent(R.id.widget_lw_footer_box, openCalendarPi)
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+    }
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        appWidgetIds.forEach { id -> updateSingleLunarWeatherWidget(context, appWidgetManager, id) }
+        // Tự động cập nhật lại thời tiết nền nếu cache đã quá 15 phút
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                WeatherManager.refreshWeather(context.applicationContext, forceNetwork = false)
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context.applicationContext)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        val prefs = context.getSharedPreferences(PREF_LW, Context.MODE_PRIVATE)
+        when (intent.action) {
+            ACTION_REFRESH_WEATHER -> {
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        WeatherManager.refreshWeather(context.applicationContext, forceNetwork = true)
+                        LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context.applicationContext)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
+            ACTION_PREV_MONTH -> {
+                val cur = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, (cur - 1).coerceIn(-120, 120)).apply()
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+            }
+            ACTION_NEXT_MONTH -> {
+                val cur = prefs.getInt(KEY_OFFSET_MONTHS, 0)
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, (cur + 1).coerceIn(-120, 120)).apply()
+                LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
+            }
+            ACTION_TODAY_MONTH,
+            Intent.ACTION_DATE_CHANGED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED -> {
+                prefs.edit().putInt(KEY_OFFSET_MONTHS, 0).apply()
                 LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
             }
         }

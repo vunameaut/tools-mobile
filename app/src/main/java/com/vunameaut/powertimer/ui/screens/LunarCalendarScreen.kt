@@ -86,9 +86,12 @@ import com.vunameaut.powertimer.ui.theme.AccentGreen
 import com.vunameaut.powertimer.ui.theme.AccentPink
 import com.vunameaut.powertimer.ui.theme.AccentPurple
 import com.vunameaut.powertimer.ui.theme.AccentRed
+import com.vunameaut.powertimer.weather.WeatherAtmosphere
+import com.vunameaut.powertimer.weather.WeatherManager
 import com.vunameaut.powertimer.widget.LunarCalendarAppWidgetProvider
 import com.vunameaut.powertimer.widget.LunarCompactStripAppWidgetProvider
 import com.vunameaut.powertimer.widget.LunarDayBlocAppWidgetProvider
+import com.vunameaut.powertimer.widget.LunarWeatherAppWidgetProvider
 import com.vunameaut.powertimer.widget.LunarWidgetFontSize
 import com.vunameaut.powertimer.widget.LunarWidgetPrefs
 import com.vunameaut.powertimer.widget.LunarWidgetStyle
@@ -1061,7 +1064,8 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                         val typeLabels = listOf(
                             "🗓️ Bảng Tháng\n(4x2)",
                             "🧧 Lịch Bloc\n(2x2 Chữ To)",
-                            "📏 Thanh Gọn\n(4x1)"
+                            "📏 Thanh Gọn\n(4x1)",
+                            "🌤️ Lịch+Thời Tiết\n(4x3)"
                         )
                         typeLabels.forEachIndexed { idx, lbl ->
                             val isSelectedType = (previewWidgetType == idx)
@@ -1079,12 +1083,12 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                             ) {
                                 Text(
                                     text = lbl,
-                                    fontSize = 10.5.sp,
+                                    fontSize = 9.8.sp,
                                     textAlign = TextAlign.Center,
-                                    lineHeight = 13.sp,
+                                    lineHeight = 12.sp,
                                     color = if (isSelectedType) AccentCyan else MaterialTheme.colorScheme.onSurface,
                                     fontWeight = if (isSelectedType) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 4.dp)
+                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 2.dp)
                                 )
                             }
                         }
@@ -1103,6 +1107,7 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                             val (providerCls, label) = when (previewWidgetType) {
                                 1 -> LunarDayBlocAppWidgetProvider::class.java to "Tờ Lịch Bloc Hôm Nay (Chữ To)"
                                 2 -> LunarCompactStripAppWidgetProvider::class.java to "Lịch Âm Hôm Nay (Thanh Gọn 4x1)"
+                                3 -> LunarWeatherAppWidgetProvider::class.java to "Lịch Âm & Thời Tiết Động (4x3)"
                                 else -> LunarCalendarAppWidgetProvider::class.java to "Lịch Âm Vạn Niên (Bảng Tháng)"
                             }
                             LunarCalendarAppWidgetProvider.refreshAllLunarWidgets(context)
@@ -1135,6 +1140,7 @@ fun LunarCalendarTool(onExit: () -> Unit) {
                             text = when (previewWidgetType) {
                                 1 -> "Ghim mẫu Tờ Lịch Bloc (2x2 Chữ To)"
                                 2 -> "Ghim mẫu Thanh Gọn (4x1)"
+                                3 -> "Ghim mẫu Lịch + Thời Tiết Động (4x3)"
                                 else -> "Ghim mẫu Bảng Tháng (4x2)"
                             },
                             fontWeight = FontWeight.ExtraBold,
@@ -1835,17 +1841,81 @@ private fun LiveLunarWidgetPreviewCard(
                 }
             }
 
-            // Mẫu 1 (Mặc định): Bảng Lịch Tháng 4x2
+            // Mẫu 1 & Mẫu 4: Bảng Lịch Tháng (4x2) hoặc Lịch + Thời Tiết Động (4x3)
             else -> {
+                val context = LocalContext.current
+                val isWeatherCombined = (widgetType == 3)
+                val weatherSnap = remember(widgetType) { WeatherManager.getCachedOrDefaultSnapshot(context) }
+                val effectiveBgBrush = if (isWeatherCombined) {
+                    val colors = when (weatherSnap.atmosphere) {
+                        WeatherAtmosphere.CLEAR_DAY -> listOf(Color(0xF20284C7), Color(0xF20F172A))
+                        WeatherAtmosphere.HOT_SUNNY -> listOf(Color(0xF5B45309), Color(0xF5451A03))
+                        WeatherAtmosphere.CLEAR_NIGHT -> listOf(Color(0xF50B1026), Color(0xF5090D16))
+                        WeatherAtmosphere.PARTLY_CLOUDY -> listOf(Color(0xF21D4ED8), Color(0xF20F172A))
+                        WeatherAtmosphere.CLOUDY -> listOf(Color(0xF2334155), Color(0xF20F172A))
+                        WeatherAtmosphere.FOG -> listOf(Color(0xF2475569), Color(0xF21E293B))
+                        WeatherAtmosphere.RAIN -> listOf(Color(0xF50F2942), Color(0xF5091526))
+                        WeatherAtmosphere.STORM -> listOf(Color(0xF51E1B4B), Color(0xF5090D16))
+                    }
+                    Brush.linearGradient(colors)
+                } else {
+                    Brush.linearGradient(listOf(widgetBg, widgetBg))
+                }
+                val lwPrimary = if (isWeatherCombined) Color(0xFFF8FAFC) else primaryText
+                val lwSecondary = if (isWeatherCombined) Color(0xFFCBD5E1) else secondaryText
+                val lwTitle = if (isWeatherCombined) Color(0xFFF8FAFC) else titleColor
+                val lwSub = if (isWeatherCombined) Color(0xFFBAE6FD) else subColor
+                val lwGreen = if (isWeatherCombined) Color(0xFF86EFAC) else goodGreen
+                val lwAmber = if (isWeatherCombined) Color(0xFFFBBF24) else lunarAmber
+                val lwLightBg = if (isWeatherCombined) false else isLightBg
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(18.dp))
-                        .background(widgetBg)
-                        .border(if (style == LunarWidgetStyle.BLOC) 2.dp else 1.dp, widgetBorder, RoundedCornerShape(18.dp))
+                        .background(effectiveBgBrush)
+                        .border(if (!isWeatherCombined && style == LunarWidgetStyle.BLOC) 2.dp else 1.dp, if (isWeatherCombined) Color(0x557DD3FC) else widgetBorder, RoundedCornerShape(18.dp))
                         .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
+                    if (isWeatherCombined) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x22FFFFFF))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(weatherSnap.emoji, fontSize = (22f * s).coerceIn(18f, 28f).sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "${weatherSnap.tempC}°",
+                                fontSize = (20f * s).coerceIn(16f, 28f).sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "${weatherSnap.cityName} • ${weatherSnap.conditionText}",
+                                    fontSize = (10.5f * s).coerceIn(8.5f, 14f).sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${weatherSnap.minTodayC}°/${weatherSnap.maxTodayC}° • 💧${weatherSnap.humidityPct}% • 💨${weatherSnap.windKmh}km/h",
+                                    fontSize = (9f * s).coerceIn(7.5f, 12f).sp,
+                                    color = Color(0xFFE2E8F0),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1856,7 +1926,7 @@ private fun LiveLunarWidgetPreviewCard(
                                 text = "🗓️ Tháng ${todayInfo.solarMonth} / ${todayInfo.solarYear} • Năm ${todayInfo.yearCanChi}",
                                 fontSize = (11.5f * s).coerceIn(9.5f, 15.5f).sp,
                                 fontWeight = FontWeight.Bold,
-                                color = titleColor,
+                                color = lwTitle,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1864,20 +1934,20 @@ private fun LiveLunarWidgetPreviewCard(
                                 text = String.format("Hôm nay: %02d/%02d DL • %02d/%02d ÂL", todayInfo.solarDay, todayInfo.solarMonth, todayInfo.lunarDay, todayInfo.lunarMonth),
                                 fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
                                 fontWeight = FontWeight.Bold,
-                                color = subColor,
+                                color = lwSub,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isLightBg) Color(0xFFE2E8F0) else Color(0xFF1E293B)
+                            color = if (lwLightBg) Color(0xFFE2E8F0) else Color(0xFF1E293B)
                         ) {
                             Text(
                                 text = "‹  Hôm nay  ›",
                                 fontSize = (9f * s).coerceIn(7.5f, 12f).sp,
                                 fontWeight = FontWeight.Bold,
-                                color = goodGreen,
+                                color = lwGreen,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
                         }
@@ -1892,9 +1962,9 @@ private fun LiveLunarWidgetPreviewCard(
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center,
                                 color = when (idx) {
-                                    6 -> Color(0xFFDC2626)
-                                    5 -> Color(0xFF0284C7)
-                                    else -> secondaryText
+                                    6 -> Color(0xFFFDA4AF)
+                                    5 -> Color(0xFF7DD3FC)
+                                    else -> lwSecondary
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -1934,10 +2004,10 @@ private fun LiveLunarWidgetPreviewCard(
                                     fontWeight = FontWeight.Bold,
                                     color = when {
                                         isTodaySample -> Color.White
-                                        idx == 6 -> Color(0xFFDC2626)
-                                        idx == 5 -> Color(0xFF0284C7)
-                                        isMung1 -> lunarAmber
-                                        else -> primaryText
+                                        idx == 6 -> Color(0xFFFDA4AF)
+                                        idx == 5 -> Color(0xFF7DD3FC)
+                                        isMung1 -> lwAmber
+                                        else -> lwPrimary
                                     }
                                 )
                                 Text(
@@ -1945,9 +2015,9 @@ private fun LiveLunarWidgetPreviewCard(
                                     fontSize = (8f * s).coerceIn(7f, 11.5f).sp,
                                     color = when {
                                         isTodaySample -> Color(0xFFFEF08A)
-                                        isMung1 -> lunarAmber
-                                        lun.endsWith("•") -> goodGreen
-                                        else -> secondaryText
+                                        isMung1 -> lwAmber
+                                        lun.endsWith("•") -> lwGreen
+                                        else -> lwSecondary
                                     }
                                 )
                             }
@@ -1956,14 +2026,14 @@ private fun LiveLunarWidgetPreviewCard(
 
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (isLightBg) Color(0x120F172A) else Color(0x18FFFFFF),
+                        color = if (lwLightBg) Color(0x120F172A) else Color(0x18FFFFFF),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             text = "${todayInfo.zodiacAnimalEmoji} Ngày ${todayInfo.dayCanChi} • ✨ Giờ tốt: ${todayInfo.auspiciousHours.take(2).joinToString(", ")}",
                             fontSize = (9.5f * s).coerceIn(8f, 13f).sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = goodGreen,
+                            color = lwGreen,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

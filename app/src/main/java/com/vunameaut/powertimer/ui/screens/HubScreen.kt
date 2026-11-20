@@ -524,6 +524,18 @@ private fun HomeScreenWidgetsBanner() {
             )
 
             QuickTileChip(
+                label = "🌤️ Ghim Lịch Âm + Thời Tiết Động (4x3)",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    ToolsHubAppWidgetProvider.requestPinWidgetToHomeScreen(
+                        context,
+                        com.vunameaut.powertimer.widget.LunarWeatherAppWidgetProvider::class.java,
+                        "Lịch Âm & Thời Tiết Động (4x3)"
+                    )
+                }
+            )
+
+            QuickTileChip(
                 label = "📅 Ghim Tiện Ích Lịch Âm - Dương Tháng",
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {

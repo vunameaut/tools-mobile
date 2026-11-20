@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PhoneCallback
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -28,6 +29,7 @@ import com.vunameaut.powertimer.ui.screens.QuickOcrClipboardTool
 import com.vunameaut.powertimer.ui.screens.RandomDecisionTool
 import com.vunameaut.powertimer.ui.screens.SoundboxTool
 import com.vunameaut.powertimer.ui.screens.VideoDownloaderTool
+import com.vunameaut.powertimer.ui.screens.WeatherForecastTool
 import com.vunameaut.powertimer.ui.theme.AccentAmber
 import com.vunameaut.powertimer.ui.theme.AccentCyan
 import com.vunameaut.powertimer.ui.theme.AccentGreen
@@ -147,5 +149,13 @@ val ToolRegistry: List<ToolEntry> = listOf(
         icon = Icons.Rounded.EventNote,
         accent = AccentCyan,
         content = { onBack -> LunarCalendarTool(onExit = onBack) }
+    ),
+    ToolEntry(
+        id = "weather_forecast",
+        title = "Thời Tiết & Lịch Widget",
+        description = "Xem thời tiết hiện tại theo vị trí (nền đổi theo thời tiết) & Ghim Widget tích hợp Lịch + Thời Tiết",
+        icon = Icons.Rounded.WbSunny,
+        accent = AccentAmber,
+        content = { onBack -> WeatherForecastTool(onExit = onBack) }
     )
 )

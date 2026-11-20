@@ -4,6 +4,7 @@
 
     <!-- Permissions for Timer & Background Execution on Modern Android (12, 13, 14, 15+) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -295,6 +296,25 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_lunar_compact_strip_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LunarWeatherAppWidgetProvider"
+            android:label="Lịch Âm &amp; Thời Tiết Động (4x3)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LW_REFRESH_WEATHER" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LW_PREV_MONTH" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LW_NEXT_MONTH" />
+                <action android:name="com.vunameaut.powertimer.widget.ACTION_LW_TODAY_MONTH" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lunar_weather_info" />
         </receiver>
 
     </application>
