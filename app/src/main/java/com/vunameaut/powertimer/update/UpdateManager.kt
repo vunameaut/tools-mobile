@@ -30,10 +30,34 @@ data class UpdateInfo(
 object UpdateManager {
 
     const val REPO = "vunameaut/tools-mobile"
+    private const val LATEST_WEB_URL = "https://github.com/$REPO/releases/latest"
     private const val LATEST_API = "https://api.github.com/repos/$REPO/releases/latest"
 
-    /** Trả về `null` nếu đang là bản mới nhất. */
+    /**
+     * Kiểm tra bản cập nhật mới nhất qua GitHub Web Redirect trước (KHÔNG bị giới hạn 60 lần/giờ lỗi 403),
+     * chỉ dùng API để lấy ghi chú phát hành nếu còn hạn mức (lỗi 403 vẫn tải & cài đặt bình thường).
+     * Trả về `null` nếu đang là bản mới nhất.
+     */
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
+        val webTag = fetchLatestTagViaWebRedirect()
+        if (webTag != null) {
+            val remoteVersion = webTag.removePrefix("v").trim()
+            if (!isNewer(remoteVersion, BuildConfig.VERSION_NAME)) return@withContext null
+
+            val apkUrl = "https://github.com/$REPO/releases/download/$webTag/ToolsHub-$webTag.apk"
+            val size = fetchContentLength(apkUrl)
+            val notes = fetchReleaseNotesBestEffort().ifBlank {
+                "Bản cập nhật mới $webTag đã sẵn sàng tải về và cài đặt."
+            }
+            return@withContext UpdateInfo(
+                versionName = remoteVersion,
+                notes = notes,
+                apkUrl = apkUrl,
+                sizeBytes = size
+            )
+        }
+
+        // Fallback cuối cùng nếu không lấy được redirect web
         val url = "$LATEST_API?t=${System.currentTimeMillis()}"
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
@@ -44,7 +68,10 @@ object UpdateManager {
             setRequestProperty("User-Agent", "ToolsHub-Updater/${BuildConfig.VERSION_NAME}")
         }
         try {
-            if (conn.responseCode == 404) return@withContext null // chưa có release nào
+            if (conn.responseCode == 404) return@withContext null
+            if (conn.responseCode == 403 || conn.responseCode == 429) {
+                error("GitHub API tạm giới hạn (403). Hãy thử bật/tắt 4G hoặc tải trực tiếp từ GitHub Releases.")
+            }
             if (conn.responseCode != 200) error("GitHub trả về mã ${conn.responseCode}")
 
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
@@ -73,6 +100,65 @@ object UpdateManager {
         } finally {
             conn.disconnect()
         }
+    }
+
+    private fun fetchLatestTagViaWebRedirect(): String? {
+        return runCatching {
+            val conn = (URL(LATEST_WEB_URL).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 12_000
+                readTimeout = 12_000
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) ToolsHub/${BuildConfig.VERSION_NAME}")
+            }
+            try {
+                val code = conn.responseCode
+                val location = conn.getHeaderField("Location") ?: ""
+                if (code in 300..399 && location.contains("/releases/tag/")) {
+                    location.substringAfterLast("/releases/tag/").substringBefore("?").trim().takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+
+    private fun fetchContentLength(fileUrl: String): Long {
+        return runCatching {
+            val conn = (URL(fileUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "ToolsHub-Updater/${BuildConfig.VERSION_NAME}")
+            }
+            try {
+                if (conn.responseCode in 200..299) conn.contentLengthLong.coerceAtLeast(0L) else 0L
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrDefault(0L)
+    }
+
+    private fun fetchReleaseNotesBestEffort(): String {
+        return runCatching {
+            val conn = (URL(LATEST_API).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout = 5_000
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("User-Agent", "ToolsHub-Updater/${BuildConfig.VERSION_NAME}")
+            }
+            try {
+                if (conn.responseCode == 200) {
+                    val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    json.optString("body", "").trim()
+                } else ""
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrDefault("")
     }
 
     /** Tải APK về cache với tên file theo phiên bản, kiểm tra tính toàn vẹn trước khi cài. */
