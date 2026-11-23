@@ -214,9 +214,9 @@ class TimerForegroundService : Service() {
             ACTION_LOCK_NOW -> {
                 val current = _timerFlow.value
                 val mode = current.selectedMode
-                stopCountdown()
-                serviceScope.launch {
+                CoroutineScope(Dispatchers.Main).launch {
                     shutdownManager.executeShutdown(mode, fadeAudio = false)
+                    stopCountdown()
                 }
             }
         }
@@ -315,13 +315,14 @@ class TimerForegroundService : Service() {
                 // Chỉ cập nhật Dynamic Island khi màn hình đang bật để tiết kiệm pin và không giữ tài nguyên ngầm
                 val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
                 if (pm?.isInteractive != false) {
+                    // Gọi NativeMediaIslandBridge mỗi 1 giây để viên thuốc con nhộng giảm từng 1s liên tục đến 00:00
+                    // (KHÔNG gọi thêm SystemDynamicIslandManager.refreshOverlay ở đây để tránh double-call MediaSession)
                     NativeMediaIslandBridge.startOrUpdate(
                         applicationContext,
                         remaining,
                         _timerFlow.value.totalSeconds,
                         mode
                     )
-                    SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
                 }
 
                 // Cảnh báo rung trước 30 giây (chỉ khi màn hình đang sáng)
@@ -330,13 +331,11 @@ class TimerForegroundService : Service() {
                     vibrateWarning()
                 }
 
-                // Cập nhật notification & Dynamic Island mỗi 1 giây khi màn hình đang bật để con nhộng giảm mượt từng giây!
-                if (remaining != lastNotifSec && pm?.isInteractive != false) {
+                // Chỉ cập nhật Notification mỗi 5 giây (hoặc 10 giây cuối) để KHÔNG chạm ngưỡng chặn 20 thông báo/20s của Android 14/15!
+                if (remaining != lastNotifSec && (remaining % 5L == 0L || remaining <= 10L) && pm?.isInteractive != false) {
                     lastNotifSec = remaining
                     updateNotification(remaining, mode)
-                    if (remaining % 5L == 0L || remaining <= 60L) {
-                        ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
-                    }
+                    ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
                 }
             }
 
@@ -363,10 +362,9 @@ class TimerForegroundService : Service() {
     }
 
     private suspend fun onCountdownFinished(mode: ShutdownMode, fadeAudio: Boolean) {
-        Log.i("TimerService", "Countdown finished. Locking screen and stopping media...")
-        // Dừng ngay MediaIsland và hủy hẹn giờ trước khi khóa màn hình để không giữ bất kỳ phiên âm thanh nào
-        NativeMediaIslandBridge.stop()
+        Log.i("TimerService", "Countdown finished. Executing shutdown BEFORE stopping service...")
         cancelExactAlarm()
+        NativeMediaIslandBridge.stop()
         shutdownManager.executeShutdown(mode, fadeAudio)
         stopCountdown()
     }

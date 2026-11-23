@@ -58,7 +58,9 @@ object NativeMediaIslandBridge {
 
         val isNewSession = (mediaSession == null)
         val session = ensureMediaSession(appCtx)
-        if (isNewSession) {
+        // Phát xung âm thanh tĩnh cực ngắn mỗi 4 giây khi đang đếm ngược
+        // để Vivo OriginOS / HyperOS không đóng băng tiến trình sau 15-19s (ở giây 00:41)!
+        if (isNewSession || remainingSeconds % 4L == 0L) {
             pulseSilentMediaInitOnce()
         }
 

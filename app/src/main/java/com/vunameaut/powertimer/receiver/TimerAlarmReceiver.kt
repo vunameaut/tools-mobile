@@ -23,8 +23,9 @@ class TimerAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_TIMER_EXPIRED) {
-            Log.d(TAG, "Exact Alarm expired! Initiating shutdown sequence and stopping timer service...")
+            Log.d(TAG, "Exact Alarm expired! Initiating shutdown sequence before stopping service...")
 
+            val pendingResult = goAsync()
             val appCtx = context.applicationContext
             val powerManager = appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager
             val wakeLock = powerManager.newWakeLock(
@@ -41,20 +42,21 @@ class TimerAlarmReceiver : BroadcastReceiver() {
             }
             val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
 
-            // Dừng ngay TimerForegroundService và NativeMediaIslandBridge để không bao giờ bị treo thời gian đếm ngược đến sáng
-            TimerForegroundService.stopTimer(appCtx)
-
             val shutdownManager = ShutdownManager(appCtx)
             CoroutineScope(Dispatchers.Main).launch {
                 try {
+                    // Thực thi Tắt màn hình & Dừng nhạc TRƯỚC, rồi mới dừng TimerForegroundService
+                    // để tránh hủy mất coroutine dở dang khiến âm lượng không khôi phục / màn hình không tắt!
                     shutdownManager.executeShutdown(
                         mode = mode,
                         fadeAudio = fadeAudio
                     )
+                    TimerForegroundService.stopTimer(appCtx)
                 } finally {
                     if (wakeLock.isHeld) {
-                        wakeLock.release()
+                        runCatching { wakeLock.release() }
                     }
+                    runCatching { pendingResult.finish() }
                 }
             }
         }

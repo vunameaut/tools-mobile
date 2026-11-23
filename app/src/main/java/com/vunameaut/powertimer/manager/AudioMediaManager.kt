@@ -15,6 +15,8 @@ import android.view.KeyEvent
 import com.vunameaut.powertimer.service.MoneySoundboxService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -22,32 +24,70 @@ class AudioMediaManager(private val context: Context) {
 
     companion object {
         private const val TAG = "AudioMediaManager"
+        private val bgScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+        // Giữ tham chiếu tĩnh tới AudioFocusRequest để không bị GC thu hồi trước khi nhả focus
+        @Volatile
+        private var heldMusicFocusRequest: AudioFocusRequest? = null
+
+        @Volatile
+        private var heldMovieFocusRequest: AudioFocusRequest? = null
+
+        private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { }
+        private var releaseFocusJob: Job? = null
     }
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     /**
-     * Dừng triệt để mọi video/nhạc đang phát trên Facebook, TikTok, YouTube, Spotify...:
-     * 1. Điều khiển trực tiếp MediaSession đang hoạt động (nếu đã cấp quyền Listener).
-     * 2. Yêu cầu AUDIOFOCUS_GAIN (vĩnh viễn) + setWillPauseWhenDucked(true) kèm xung tĩnh 250ms
-     *    trên STREAM_MUSIC để ép ExoPlayer (Facebook Watch / Reels / TikTok) dừng hẳn thay vì phớt lờ.
-     * 3. Gửi KeyEvent PAUSE/STOP 2 nhịp cách nhau 600ms để chặn video tự phát tiếp.
-     * 4. Tự động nhả AudioFocus sau 4.5 giây trên coroutine nền để không ảnh hưởng chuông cuộc gọi.
+     * Dừng triệt để mọi nhạc & video đang phát (Facebook, TikTok, YouTube, Spotify, Zing MP3...)
+     * mà TUYỆT ĐỐI KHÔNG HẠ ÂM LƯỢNG MÁY VỀ 0 (giữ nguyên mức âm lượng hiện tại của người dùng).
      */
     suspend fun pauseAllMediaAndReleaseFocus() {
-        // Bước 1: Dừng trực tiếp qua MediaSessionManager (nếu NotificationListener đang hoạt động)
+        // Phục hồi nếu âm lượng bị kẹt ở mức 0 từ bản cũ
+        runCatching {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (curVol == 0 && maxVol > 0) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol / 3).coerceAtLeast(3), 0)
+            }
+        }
+
+        // 1. Dừng trực tiếp các MediaSession đang hoạt động (nếu NotificationListener đang bật)
         pauseActiveMediaSessionsViaController()
 
-        // Bước 2: Gửi phím Pause & Stop toàn hệ thống (nhịp 1)
+        // 2. Xin AUDIOFOCUS_GAIN (Permanent Loss) cho cả Music & Movie
+        requestPermanentAudioFocus()
+
+        // 3. Gửi phím cứng Media Pause & Stop
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_STOP)
 
-        // Bước 3: Yêu cầu AUDIOFOCUS_GAIN (Permanent Loss đối với app kia) thay vì TRANSIENT
-        var focusRequest: AudioFocusRequest? = null
-        var legacyListener: AudioManager.OnAudioFocusChangeListener? = null
+        // 4. Phát xung âm thanh tĩnh 200ms trên STREAM_MUSIC trên luồng nền để ép System Audio Policy thu hồi focus
+        bgScope.launch {
+            playSilentFocusTriggerPulseAsync()
+            delay(350L)
+            requestPermanentAudioFocus()
+            pauseActiveMediaSessionsViaController()
+            sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
+            sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_STOP)
 
+            delay(450L)
+            pauseActiveMediaSessionsViaController()
+            sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
+        }
+
+        // 5. Giữ AudioFocus 6 giây rồi mới nhả để không chặn chuông cuộc gọi / báo thức
+        releaseFocusJob?.cancel()
+        releaseFocusJob = bgScope.launch {
+            delay(6000L)
+            abandonHeldAudioFocus()
+        }
+    }
+
+    private fun requestPermanentAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            val musicReq = heldMusicFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -56,40 +96,44 @@ class AudioMediaManager(private val context: Context) {
                 )
                 .setWillPauseWhenDucked(true)
                 .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener { }
+                .setOnAudioFocusChangeListener(focusChangeListener)
                 .build()
-            focusRequest = req
-            runCatching { audioManager.requestAudioFocus(req) }
+                .also { heldMusicFocusRequest = it }
+
+            val movieReq = heldMovieFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build()
+                )
+                .setWillPauseWhenDucked(true)
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener(focusChangeListener)
+                .build()
+                .also { heldMovieFocusRequest = it }
+
+            runCatching { audioManager.requestAudioFocus(musicReq) }
+            runCatching { audioManager.requestAudioFocus(movieReq) }
         } else {
-            val listener = AudioManager.OnAudioFocusChangeListener { }
-            legacyListener = listener
             @Suppress("DEPRECATION")
             runCatching {
                 audioManager.requestAudioFocus(
-                    listener,
+                    focusChangeListener,
                     AudioManager.STREAM_MUSIC,
                     AudioManager.AUDIOFOCUS_GAIN
                 )
             }
         }
+    }
 
-        // Bước 4: Phát một xung âm thanh câm 250ms trên STREAM_MUSIC để ép System Audio Policy thu hồi focus khỏi Facebook/TikTok
-        playSilentFocusTriggerPulse()
-
-        // Bước 5: Gửi bồi thêm 1 nhịp Pause sau 600ms để chặn trường hợp Facebook Reels/Watch tự play lại
-        delay(600L)
-        pauseActiveMediaSessionsViaController()
-        sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
-
-        // Bước 6: Giữ AUDIOFOCUS_GAIN ngầm thêm 4 giây rồi mới giải phóng để không chặn chuông cuộc gọi / báo thức
-        CoroutineScope(Dispatchers.Default).launch {
-            delay(4000L)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                focusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
-            } else {
-                @Suppress("DEPRECATION")
-                legacyListener?.let { runCatching { audioManager.abandonAudioFocus(it) } }
-            }
+    private fun abandonHeldAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            heldMusicFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
+            heldMovieFocusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching { audioManager.abandonAudioFocus(focusChangeListener) }
         }
     }
 
@@ -116,10 +160,10 @@ class AudioMediaManager(private val context: Context) {
         }
     }
 
-    private fun playSilentFocusTriggerPulse() {
+    private suspend fun playSilentFocusTriggerPulseAsync() {
         runCatching {
             val sampleRate = 8000
-            val count = sampleRate / 4 // 250ms
+            val count = sampleRate / 5 // 200ms
             val samples = ShortArray(count) { 0 }
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -141,7 +185,7 @@ class AudioMediaManager(private val context: Context) {
             track.write(samples, 0, count)
             track.setVolume(0.0f)
             track.play()
-            Thread.sleep(260L)
+            delay(210L)
             track.stop()
             track.release()
         }
@@ -149,6 +193,7 @@ class AudioMediaManager(private val context: Context) {
 
     fun pauseAllMedia() {
         pauseActiveMediaSessionsViaController()
+        requestPermanentAudioFocus()
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_STOP)
     }
@@ -156,38 +201,16 @@ class AudioMediaManager(private val context: Context) {
     private fun sendMediaKeyEvent(keyCode: Int) {
         val eventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
         val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
-        audioManager.dispatchMediaKeyEvent(eventDown)
-        audioManager.dispatchMediaKeyEvent(eventUp)
+        runCatching {
+            audioManager.dispatchMediaKeyEvent(eventDown)
+            audioManager.dispatchMediaKeyEvent(eventUp)
+        }
     }
 
     /**
-     * Giảm dần âm lượng Media trước khi dừng phát (Fade-out), sau khi dừng nhạc/video xong sẽ
-     * TỰ ĐỘNG KHÔI PHỤC lại mức âm lượng ban đầu để sáng hôm sau máy không bị mất tiếng!
+     * Tuyệt đối KHÔNG hạ âm lượng máy về 0 nữa; dừng nhạc/video tức thì và giữ nguyên âm lượng người dùng.
      */
-    suspend fun fadeOutAndPauseMedia(fadeAudio: Boolean, durationMs: Long = 2800L) {
-        val originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-
-        if (fadeAudio && originalVolume > 0) {
-            val steps = originalVolume.coerceAtLeast(1)
-            val stepDelay = (durationMs / steps).coerceAtLeast(100L)
-
-            for (i in (originalVolume - 1) downTo 0) {
-                runCatching {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, i, 0)
-                }
-                delay(stepDelay)
-            }
-        }
-
-        // Dừng toàn bộ trình phát nhạc/video (YouTube, Facebook, TikTok...)
+    suspend fun fadeOutAndPauseMedia(fadeAudio: Boolean, durationMs: Long = 0L) {
         pauseAllMediaAndReleaseFocus()
-
-        // Khôi phục lại âm lượng Media ban đầu sau khi video đã dừng hẳn
-        if (fadeAudio && originalVolume > 0) {
-            delay(500L)
-            runCatching {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
-            }
-        }
     }
 }
