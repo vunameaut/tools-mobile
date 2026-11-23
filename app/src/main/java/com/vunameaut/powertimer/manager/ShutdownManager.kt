@@ -22,7 +22,8 @@ class ShutdownManager(private val context: Context) {
     private val audioMediaManager = AudioMediaManager(context)
 
     /**
-     * Thực thi quy trình tắt màn hình & dừng phát media (Tuyệt đối không đụng vào chế độ Không làm phiền hay Chuông của máy)
+     * Thực thi quy trình tắt màn hình & dừng phát media cho toàn bộ 5 chế độ:
+     * (Tuyệt đối không đụng vào chế độ Không làm phiền hay Chuông của máy)
      */
     suspend fun executeShutdown(
         mode: ShutdownMode,
@@ -30,21 +31,20 @@ class ShutdownManager(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         Log.i(TAG, "Executing screen off sequence with mode: $mode")
 
-        // Kiểm tra xem màn hình hiện tại đang sáng hay đã tắt sẵn từ trước
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val isScreenCurrentlyOn = pm?.isInteractive ?: true
 
-        // 1 & 2. Giảm âm lượng êm ái (chỉ khi màn hình đang sáng), dừng phát nhạc/video, nhả AudioFocus và khôi phục lại mức âm lượng ban đầu
+        // 1. Giảm âm lượng êm ái (khi màn hình sáng) & Dừng toàn bộ media (Facebook/TikTok/YouTube...)
         audioMediaManager.fadeOutAndPauseMedia(fadeAudio = fadeAudio && isScreenCurrentlyOn)
 
-        // Nếu màn hình ĐÃ TẮT SẴN (ví dụ hết video YouTube và máy đã tự tắt màn hình từ trước),
-        // không cần mở BlackoutSleepActivity làm sáng màn hình lại giữa đêm!
+        // Nếu màn hình ĐÃ TẮT SẴN (ví dụ hết video và máy đã tự tắt từ trước),
+        // không bật BlackoutSleepActivity làm sáng lại màn hình giữa đêm!
         if (!isScreenCurrentlyOn) {
-            Log.i(TAG, "Screen is already off (non-interactive). Skipping screen blackout launch.")
+            Log.i(TAG, "Screen is already off (non-interactive). Skipping screen lock UI.")
             return@withContext true
         }
 
-        // 3. Thực hiện tắt / khóa màn hình theo chế độ khi màn hình đang sáng
+        // 2. Thực hiện tắt / khóa màn hình theo chế độ
         return@withContext when (mode) {
             ShutdownMode.BANK_SAFE_SLEEP -> executeBankSafeSleep()
             ShutdownMode.DEVICE_ADMIN -> executeDeviceAdminLock()
@@ -58,8 +58,8 @@ class ShutdownManager(private val context: Context) {
     }
 
     /**
-     * Tắt màn hình chuẩn Ngân hàng (Không dùng Trợ năng + Giữ nguyên Vân tay / Khuôn mặt):
-     * Hạ thời gian sáng màn hình xuống mức tối thiểu & mở màn hình tối đen OLED 0% độ sáng.
+     * Chế độ 1: Tắt màn hình Chuẩn Ngân Hàng (Không dùng Trợ năng + Giữ nguyên Vân tay / Khuôn mặt):
+     * Hạ SCREEN_OFF_TIMEOUT + phủ màn hình đen OLED 0% đè lên Facebook/TikTok để app video tự pause & nhả WakeLock.
      */
     private suspend fun executeBankSafeSleep(): Boolean = withContext(Dispatchers.Main) {
         try {
@@ -73,46 +73,51 @@ class ShutdownManager(private val context: Context) {
     }
 
     /**
-     * Tắt màn hình qua Trợ năng (Giữ nguyên vân tay / khuôn mặt) rồi TỰ ĐỘNG TẮT Trợ năng ngay sau đó.
+     * Chế độ 2: Khóa màn hình tức thì qua Device Administrator (Không dùng Trợ năng)
      */
-    private suspend fun executeAccessibilityLock(): Boolean {
-        val accessibilityService = PowerAccessibilityService.instance
-        if (accessibilityService != null && accessibilityService.performLockScreen(autoDisableAfterLock = true)) {
-            return true
+    private suspend fun executeDeviceAdminLock(allowFallback: Boolean = true): Boolean = withContext(Dispatchers.Main) {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
+            if (dpm.isAdminActive(adminComponent)) {
+                dpm.lockNow()
+                return@withContext true
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "DeviceAdmin lockNow error: ${e.message}")
         }
-
-        if (executeDeviceAdminLock(allowFallback = false)) {
-            return true
+        if (allowFallback) {
+            return@withContext executeBankSafeSleep()
         }
-        return executeBankSafeSleep()
+        return@withContext false
     }
 
     /**
-     * Về màn hình chính (Home) rồi tắt màn hình và tự động tắt Trợ năng
+     * Chế độ 4: Tắt màn hình qua Trợ năng (Giữ nguyên vân tay / khuôn mặt) rồi TỰ ĐỘNG TẮT Trợ năng ngay sau đó.
      */
-    private suspend fun executeHomeAndLock(): Boolean {
+    private suspend fun executeAccessibilityLock(): Boolean = withContext(Dispatchers.Main) {
+        val accessibilityService = PowerAccessibilityService.instance
+        if (accessibilityService != null && accessibilityService.performLockScreen(autoDisableAfterLock = true)) {
+            return@withContext true
+        }
+        if (executeDeviceAdminLock(allowFallback = false)) {
+            return@withContext true
+        }
+        return@withContext executeBankSafeSleep()
+    }
+
+    /**
+     * Chế độ 5: Về màn hình chính (Home) rồi khóa màn hình và tự động tắt Trợ năng
+     */
+    private suspend fun executeHomeAndLock(): Boolean = withContext(Dispatchers.Main) {
         val accessibilityService = PowerAccessibilityService.instance
         if (accessibilityService != null) {
             accessibilityService.performGoHome()
-            delay(400L)
-            return accessibilityService.performLockScreen(autoDisableAfterLock = true)
+            delay(500L)
+            if (accessibilityService.performLockScreen(autoDisableAfterLock = true)) {
+                return@withContext true
+            }
         }
-        return executeAccessibilityLock()
-    }
-
-    /**
-     * Khóa màn hình qua quyền Quản trị viên thiết bị (DevicePolicyManager) — Không dùng Trợ năng
-     */
-    private suspend fun executeDeviceAdminLock(allowFallback: Boolean = true): Boolean {
-        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
-        if (dpm.isAdminActive(adminComponent)) {
-            dpm.lockNow()
-            return true
-        }
-        if (allowFallback) {
-            return executeBankSafeSleep()
-        }
-        return false
+        return@withContext executeAccessibilityLock()
     }
 }

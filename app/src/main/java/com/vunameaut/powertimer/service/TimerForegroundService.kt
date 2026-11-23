@@ -330,11 +330,13 @@ class TimerForegroundService : Service() {
                     vibrateWarning()
                 }
 
-                // Cập nhật notification & widget định kỳ khi màn hình đang sáng
-                if (remaining != lastNotifSec && (remaining % 5L == 0L || remaining <= 60L) && pm?.isInteractive != false) {
+                // Cập nhật notification & Dynamic Island mỗi 1 giây khi màn hình đang bật để con nhộng giảm mượt từng giây!
+                if (remaining != lastNotifSec && pm?.isInteractive != false) {
                     lastNotifSec = remaining
                     updateNotification(remaining, mode)
-                    ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
+                    if (remaining % 5L == 0L || remaining <= 60L) {
+                        ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
+                    }
                 }
             }
 
@@ -389,14 +391,33 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val showAppIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("OPEN_TOOL_ID", "power_timer")
+        }
+        val showAppPi = PendingIntent.getActivity(
+            this,
+            10,
+            showAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
-            } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            // Dùng setAlarmClock để được Android cấp quyền miễn trừ Background Activity Launch (bật được BlackoutSleepActivity đè lên Facebook/TikTok)
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(triggerAtMillis, showAppPi),
+                pendingIntent
+            )
+        } catch (_: Throwable) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                } else {
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                }
+            } catch (_: SecurityException) {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
             }
-        } catch (e: SecurityException) {
-            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
         }
     }
 

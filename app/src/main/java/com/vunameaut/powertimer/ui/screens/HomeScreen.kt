@@ -69,6 +69,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.service.IslandDisplayStyle
+import com.vunameaut.powertimer.service.NativeMediaIslandBridge
 import com.vunameaut.powertimer.service.SystemDynamicIslandManager
 import com.vunameaut.powertimer.ui.components.CircularCountdownTimer
 import com.vunameaut.powertimer.ui.components.ModeSelectorCard
@@ -120,10 +121,19 @@ fun HomeScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                canDrawOverlays = SystemDynamicIslandManager.canDrawOverlays(context)
-                isIslandMinimized = SystemDynamicIslandManager.isMinimized(context)
-                SystemDynamicIslandManager.refreshOverlay(context)
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.refreshPermissions()
+                    canDrawOverlays = SystemDynamicIslandManager.canDrawOverlays(context)
+                    isIslandMinimized = SystemDynamicIslandManager.isMinimized(context)
+                    SystemDynamicIslandManager.refreshOverlay(context)
+                }
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    if (viewModel.timerState.value.isRunning) {
+                        NativeMediaIslandBridge.nudgeCapsulePlayback(context)
+                    }
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -173,7 +183,20 @@ fun HomeScreen(
     }
 
     val scrollState = rememberScrollState()
-    val presets = listOf(15L, 30L, 45L, 60L, 90L, 120L)
+    val quickSecondPresets = remember {
+        listOf(
+            "10s" to 10L,
+            "30s" to 30L,
+            "1m" to 60L,
+            "5m" to 300L,
+            "15m" to 900L,
+            "30m" to 1800L,
+            "45m" to 2700L,
+            "60m" to 3600L,
+            "90m" to 5400L,
+            "120m" to 7200L
+        )
+    }
 
     val currentDisplayTime = if (timerState.isRunning) {
         timerState.formattedRemaining
@@ -304,9 +327,19 @@ fun HomeScreen(
                     description = "Cho phép ứng dụng tự hạ thời gian chờ màn hình khi hết giờ (100% không dùng Trợ năng, không bị App Ngân hàng chặn, giữ nguyên Vân tay).",
                     isGranted = false,
                     onGrantClick = { viewModel.openWriteSettingsPermission() },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+            if (selectedMode == ShutdownMode.BANK_SAFE_SLEEP && !canDrawOverlays) {
+                PermissionItem(
+                    title = "Bật Hiển thị trên ứng dụng khác (Khi xem Facebook / TikTok)",
+                    description = "Giúp phủ màn hình đen OLED đè lên Facebook/TikTok khi hết giờ để tắt màn hình chuẩn Ngân hàng mượt mà ngay cả khi đang phát video.",
+                    isGranted = false,
+                    onGrantClick = { SystemDynamicIslandManager.openOverlayPermissionSettings(context) },
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
-            } else if (selectedMode.requiresDeviceAdmin && !permissions.isDeviceAdminActive) {
+            }
+            if (selectedMode.requiresDeviceAdmin && !permissions.isDeviceAdminActive) {
                 PermissionItem(
                     title = "Cần bật Quản trị viên thiết bị",
                     description = "Khóa màn hình tức thì mà KHÔNG dùng Trợ năng (hoàn toàn không bị App Ngân hàng chặn).",
@@ -431,10 +464,10 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Danh sách preset thời gian nhanh (khi chưa chạy)
+            // Danh sách preset thời gian nhanh & Tự nhập (khi chưa chạy)
             if (!timerState.isRunning) {
                 Text(
-                    text = "Mốc thời gian nhanh",
+                    text = "Mốc thời gian nhanh (Chạm đồng hồ hoặc 'Tự nhập' để chỉnh từng giây)",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.align(Alignment.Start)
@@ -446,14 +479,26 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(presets) { minutes ->
-                        val isSelected = selectedSeconds == minutes * 60
+                    item {
+                        FilterChip(
+                            selected = false,
+                            onClick = { showPicker = true },
+                            label = { Text("⚙️ Tự nhập", fontWeight = FontWeight.Bold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = AccentPurple.copy(alpha = 0.2f),
+                                labelColor = AccentCyan
+                            ),
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                    }
+                    items(quickSecondPresets) { (label, secs) ->
+                        val isSelected = selectedSeconds == secs
                         FilterChip(
                             selected = isSelected,
-                            onClick = { viewModel.setTimeInMinutes(minutes) },
+                            onClick = { viewModel.setCustomSeconds(secs) },
                             label = {
                                 Text(
-                                    text = "${minutes}m",
+                                    text = label,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                 )
                             },
