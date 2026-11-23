@@ -139,7 +139,6 @@ class BlackoutSleepActivity : Activity() {
         fun triggerNaturalHomeScreenLock(context: Context) {
             val appCtx = context.applicationContext
             launchHomeScreenFromBackground(appCtx)
-            applyMinimumScreenTimeout(appCtx)
 
             val mainHandler = Handler(Looper.getMainLooper())
             appLevelScreenOffReceiver?.let { existing ->
@@ -167,16 +166,28 @@ class BlackoutSleepActivity : Activity() {
                 }
             }
 
-            // Dự phòng sau 20s tự trả lại SCREEN_OFF_TIMEOUT nếu người dùng chạm sáng màn hình liên tục
+            // Áp dụng timeout thấp nhất sau khi đã về Home (350ms) để hệ thống không reset lại idle timer
             mainHandler.postDelayed({
-                restoreOriginalScreenTimeout(appCtx)
-                appLevelScreenOffReceiver?.let { r ->
-                    runCatching { appCtx.unregisterReceiver(r) }
-                    if (appLevelScreenOffReceiver === r) {
-                        appLevelScreenOffReceiver = null
-                    }
+                val appliedMs = applyMinimumScreenTimeout(appCtx)
+                val waitSec = ((appliedMs + 999) / 1000).coerceAtLeast(1)
+                if (appliedMs > 0) {
+                    android.widget.Toast.makeText(
+                        appCtx,
+                        "⏳ Đã dừng phát! Màn hình sẽ tự tắt sau ${waitSec}s (Giữ Vân tay)",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
-            }, 20_000L)
+                val safetyRestoreMs = (appliedMs.toLong() + 25_000L).coerceAtLeast(45_000L)
+                mainHandler.postDelayed({
+                    restoreOriginalScreenTimeout(appCtx)
+                    appLevelScreenOffReceiver?.let { r ->
+                        runCatching { appCtx.unregisterReceiver(r) }
+                        if (appLevelScreenOffReceiver === r) {
+                            appLevelScreenOffReceiver = null
+                        }
+                    }
+                }, safetyRestoreMs)
+            }, 350L)
         }
 
         fun launch(context: Context) {
@@ -263,8 +274,8 @@ class BlackoutSleepActivity : Activity() {
             }
         }
 
-        fun applyMinimumScreenTimeout(context: Context): Boolean {
-            if (!Settings.System.canWrite(context)) return false
+        fun applyMinimumScreenTimeout(context: Context): Int {
+            if (!Settings.System.canWrite(context)) return -1
             return try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val currentTimeout = Settings.System.getInt(
@@ -275,15 +286,28 @@ class BlackoutSleepActivity : Activity() {
                 if (currentTimeout > 12_000 && !prefs.contains(KEY_SAVED_TIMEOUT)) {
                     prefs.edit().putInt(KEY_SAVED_TIMEOUT, currentTimeout).apply()
                 }
-                Settings.System.putInt(
-                    context.contentResolver,
-                    Settings.System.SCREEN_OFF_TIMEOUT,
-                    MIN_TIMEOUT_MS
-                )
-                true
+                // Thử lần lượt từ 1s -> 5s -> 10s -> 15s -> 30s vì Vivo OriginOS từ chối số quá nhỏ (< 15s)
+                val candidates = intArrayOf(MIN_TIMEOUT_MS, 5_000, 10_000, 15_000, 30_000)
+                for (candidate in candidates) {
+                    Settings.System.putInt(
+                        context.contentResolver,
+                        Settings.System.SCREEN_OFF_TIMEOUT,
+                        candidate
+                    )
+                    val actual = Settings.System.getInt(
+                        context.contentResolver,
+                        Settings.System.SCREEN_OFF_TIMEOUT,
+                        currentTimeout
+                    )
+                    if (actual <= candidate + 1000) {
+                        Log.i(TAG, "Applied SCREEN_OFF_TIMEOUT = ${actual}ms (candidate $candidate)")
+                        return actual
+                    }
+                }
+                Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 30_000)
             } catch (e: Throwable) {
                 Log.w(TAG, "Failed to lower SCREEN_OFF_TIMEOUT: ${e.message}")
-                false
+                -1
             }
         }
 
