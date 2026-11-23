@@ -79,25 +79,24 @@ class ShutdownManager(private val context: Context) {
 
     /**
      * Chế độ Tắt màn hình Chuẩn Ngân Hàng (Không dùng Trợ năng -> 100% App Ngân hàng & VNeID hoạt động bình thường):
-     * 1) Đưa ứng dụng video (TikTok / Facebook / YouTube) về Màn hình chính để dừng phát video & nhả cờ giữ sáng màn hình.
-     * 2) Nếu đã bật Quản trị viên thiết bị: Khóa màn hình phần cứng THẬT (Lock Screen 0.1s) — không có màn hình đen giả nào!
-     * 3) Nếu chưa bật Quản trị viên thiết bị: Bật màn hình đen tạm (chạm 1 lần thoát ngay) kèm hạ screen timeout để máy tự tắt.
+     * 1) Nếu đã bật Quản trị viên thiết bị: Thoát về Màn hình chính + khóa Lock Screen phần cứng tức thì (`dpm.lockNow()`).
+     * 2) Mặc định (chỉ cần quyền Hạ thời gian sáng + Hiển thị trên app khác):
+     *    Thoát ứng dụng video (TikTok/FB/YT) ra Màn hình chính thật + hạ thời gian chờ xuống mức tối thiểu
+     *    -> Máy tự tắt & khóa Lock Screen tự nhiên, giữ nguyên Vân tay / Khuôn mặt, KHÔNG dùng màn hình đen giả!
      */
     private suspend fun executeBankSafeSleep(): Boolean {
         return try {
             PowerAccessibilityService.disableAndHideForBanking(context)
-            BlackoutSleepActivity.launchHomeScreenFromBackground(context)
-
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
             if (dpm.isAdminActive(adminComponent)) {
+                BlackoutSleepActivity.launchHomeScreenFromBackground(context)
                 delay(150L)
                 dpm.lockNow()
-                true
             } else {
-                BlackoutSleepActivity.launch(context)
-                true
+                BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
             }
+            true
         } catch (e: Throwable) {
             Log.e(TAG, "BankSafeSleep error: ${e.message}")
             executeDeviceAdminLock(allowFallback = false)
@@ -118,7 +117,7 @@ class ShutdownManager(private val context: Context) {
             Log.e(TAG, "DeviceAdmin lockNow error: ${e.message}")
         }
         if (allowFallback) {
-            BlackoutSleepActivity.launch(context)
+            BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
             return true
         }
         return false

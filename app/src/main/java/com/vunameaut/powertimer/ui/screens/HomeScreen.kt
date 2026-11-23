@@ -321,19 +321,10 @@ fun HomeScreen(
             }
 
             // Gợi ý cấp quyền tương ứng với chế độ đang chọn
-            if (selectedMode == ShutdownMode.BANK_SAFE_SLEEP && !permissions.isDeviceAdminActive) {
-                PermissionItem(
-                    title = "Bật Khóa màn hình thật (Chuẩn Ngân Hàng - Lock Screen)",
-                    description = "Cấp quyền Quản trị viên thiết bị để tắt & khóa hẳn màn hình điện thoại thật trong 0.1s (không dùng Trợ năng, không tạo màn hình đen giả, dùng App Ngân hàng bình thường).",
-                    isGranted = false,
-                    onGrantClick = { viewModel.requestDeviceAdmin() },
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-            }
             if (selectedMode.requiresWriteSettings && !permissions.canWriteSettings) {
                 PermissionItem(
-                    title = "Cấp quyền Hạ thời gian sáng (Dự phòng)",
-                    description = "Cho phép ứng dụng tự hạ thời gian chờ màn hình xuống mức tối thiểu khi dùng chế độ dự phòng.",
+                    title = "Cấp quyền Hạ thời gian sáng (Chuẩn Ngân Hàng)",
+                    description = "Cho phép tự hạ thời gian chờ màn hình xuống mức tối thiểu ngay ngoài Màn hình chính để máy tự tắt & khóa Lock Screen tự nhiên (100% không dùng Trợ năng).",
                     isGranted = false,
                     onGrantClick = { viewModel.openWriteSettingsPermission() },
                     modifier = Modifier.padding(bottom = 12.dp)
@@ -342,7 +333,7 @@ fun HomeScreen(
             if ((selectedMode == ShutdownMode.BANK_SAFE_SLEEP || selectedMode == ShutdownMode.MEDIA_ONLY) && !canDrawOverlays) {
                 PermissionItem(
                     title = "Bật Hiển thị trên ứng dụng khác (Để dừng hẳn TikTok / Facebook)",
-                    description = "Cho phép thoát ứng dụng video (TikTok, Douyin, Facebook) về Màn hình chính khi hết giờ giúp video dừng phát 100%.",
+                    description = "Cho phép thoát ứng dụng video (TikTok, Douyin, Facebook) về Màn hình chính khi hết giờ giúp video dừng phát 100% và nhả sáng màn hình.",
                     isGranted = false,
                     onGrantClick = { SystemDynamicIslandManager.openOverlayPermissionSettings(context) },
                     modifier = Modifier.padding(bottom = 16.dp)

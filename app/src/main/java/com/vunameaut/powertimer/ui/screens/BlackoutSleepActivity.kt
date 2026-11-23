@@ -126,6 +126,59 @@ class BlackoutSleepActivity : Activity() {
             }
         }
 
+        @Volatile
+        private var appLevelScreenOffReceiver: BroadcastReceiver? = null
+
+        /**
+         * Tắt màn hình tự nhiên Chuẩn Ngân Hàng KHÔNG mở bất kỳ màn hình đen giả nào:
+         * 1. Thoát TikTok/Facebook/YouTube ra Màn hình chính thật (dừng video & nhả cờ giữ sáng).
+         * 2. Hạ thời gian chờ tắt màn hình (SCREEN_OFF_TIMEOUT) xuống mức tối thiểu ngay ngoài Màn hình chính
+         *    -> Máy tự tắt & khóa Lock Screen phần cứng sau vài giây, giữ nguyên Vân tay / Khuôn mặt!
+         * 3. Lắng nghe ACTION_SCREEN_OFF cấp Application để tự trả lại timeout ban đầu ngay khi màn hình tắt.
+         */
+        fun triggerNaturalHomeScreenLock(context: Context) {
+            val appCtx = context.applicationContext
+            launchHomeScreenFromBackground(appCtx)
+            applyMinimumScreenTimeout(appCtx)
+
+            val mainHandler = Handler(Looper.getMainLooper())
+            appLevelScreenOffReceiver?.let { existing ->
+                runCatching { appCtx.unregisterReceiver(existing) }
+                appLevelScreenOffReceiver = null
+            }
+
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: Intent?) {
+                    if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                        restoreOriginalScreenTimeout(appCtx)
+                        runCatching { appCtx.unregisterReceiver(this) }
+                        if (appLevelScreenOffReceiver === this) {
+                            appLevelScreenOffReceiver = null
+                        }
+                    }
+                }
+            }
+            appLevelScreenOffReceiver = receiver
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appCtx.registerReceiver(receiver, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    appCtx.registerReceiver(receiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+                }
+            }
+
+            // Dự phòng sau 20s tự trả lại SCREEN_OFF_TIMEOUT nếu người dùng chạm sáng màn hình liên tục
+            mainHandler.postDelayed({
+                restoreOriginalScreenTimeout(appCtx)
+                appLevelScreenOffReceiver?.let { r ->
+                    runCatching { appCtx.unregisterReceiver(r) }
+                    if (appLevelScreenOffReceiver === r) {
+                        appLevelScreenOffReceiver = null
+                    }
+                }
+            }, 20_000L)
+        }
+
         fun launch(context: Context) {
             val appCtx = context.applicationContext
             applyMinimumScreenTimeout(appCtx)

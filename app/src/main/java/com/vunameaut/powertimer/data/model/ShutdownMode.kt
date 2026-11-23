@@ -20,8 +20,8 @@ enum class ShutdownMode(
      */
     BANK_SAFE_SLEEP(
         title = "Tắt màn hình Chuẩn Ngân Hàng",
-        description = "Không dùng Trợ năng (100% App Ngân hàng & VNeID hoạt động bình thường). Thoát ứng dụng đang phát video & khóa màn hình thật (Lock Screen).",
-        badge = "Khuyên dùng • Khóa Thật",
+        description = "Không dùng Trợ năng (100% App Ngân hàng & VNeID dùng bình thường). Thoát app video ra Màn hình chính thật và hạ thời gian sáng để máy tự tắt & khóa Lock Screen, giữ nguyên Vân tay.",
+        badge = "Khuyên dùng • Giữ Vân Tay",
         requiresWriteSettings = true
     ),
 

@@ -117,8 +117,30 @@ class PermissionManager(private val context: Context) {
     }
 
     fun requestDeviceAdmin() {
+        // Trên Vivo OriginOS / HyperOS, Android 14+ thường tự back về app nếu bắn thẳng ACTION_ADD_DEVICE_ADMIN
+        // đối với APK cài ngoài Store. Vì vậy mở thẳng danh sách "Ứng dụng quản trị thiết bị" trong Cài đặt!
+        val openedAdminList = listOf(
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$DeviceAdminSettingsActivity"),
+            Intent().setClassName("com.android.settings", "com.android.settings.DeviceAdminSettings")
+        ).any { candidate ->
+            runCatching {
+                candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(candidate)
+                true
+            }.getOrDefault(false)
+        }
+
+        if (openedAdminList) {
+            android.widget.Toast.makeText(
+                context,
+                "Chọn \"Tools Hub\" trong danh sách và bấm Kích hoạt!",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
-        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+        val addIntent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
             putExtra(
                 DevicePolicyManager.EXTRA_ADD_EXPLANATION,
@@ -126,7 +148,20 @@ class PermissionManager(private val context: Context) {
             )
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(intent)
+        val openedAdd = runCatching {
+            context.startActivity(addIntent)
+            true
+        }.getOrDefault(false)
+
+        if (!openedAdd) {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                )
+            }
+        }
     }
 
     fun isRootAvailable(): Boolean {
