@@ -42,6 +42,7 @@ class BlackoutSleepActivity : Activity() {
         private const val MIN_TIMEOUT_MS = 1000
         private const val FULLSCREEN_CHANNEL_ID = "blackout_sleep_channel"
         private const val FULLSCREEN_NOTIF_ID = 1099
+        private const val EXTRA_GO_HOME_AND_FINISH = "extra_go_home_and_finish"
 
         /**
          * Đưa thiết bị về Màn hình chính (Home) từ dưới nền mà KHÔNG cần Trợ năng (Accessibility):
@@ -139,6 +140,9 @@ class BlackoutSleepActivity : Activity() {
         fun triggerNaturalHomeScreenLock(context: Context) {
             val appCtx = context.applicationContext
             launchHomeScreenFromBackground(appCtx)
+            // Mở kèm BlackoutSleepActivity ở chế độ cầu nối 100ms để chắc chắn vượt qua màn hình TikTok đang ở Foreground,
+            // đẩy TikTok xuống nền rồi tự động chuyển về Màn hình chính Home và đóng ngay lập tức!
+            launchBridgeToHome(appCtx)
 
             val mainHandler = Handler(Looper.getMainLooper())
             appLevelScreenOffReceiver?.let { existing ->
@@ -166,14 +170,14 @@ class BlackoutSleepActivity : Activity() {
                 }
             }
 
-            // Áp dụng timeout thấp nhất sau khi đã về Home (350ms) để hệ thống không reset lại idle timer
+            // Áp dụng timeout thấp nhất sau khi đã về Home (500ms) để hệ thống không reset lại idle timer
             mainHandler.postDelayed({
                 val appliedMs = applyMinimumScreenTimeout(appCtx)
                 val waitSec = ((appliedMs + 999) / 1000).coerceAtLeast(1)
                 if (appliedMs > 0) {
                     android.widget.Toast.makeText(
                         appCtx,
-                        "⏳ Đã dừng phát! Màn hình sẽ tự tắt sau ${waitSec}s (Giữ Vân tay)",
+                        "⏳ Đã thoát về Màn hình chính! Máy sẽ tự tắt sau ${waitSec}s (Giữ Vân tay)",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -187,7 +191,46 @@ class BlackoutSleepActivity : Activity() {
                         }
                     }
                 }, safetyRestoreMs)
-            }, 350L)
+            }, 500L)
+        }
+
+        private fun launchBridgeToHome(appCtx: Context) {
+            val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
+                putExtra(EXTRA_GO_HOME_AND_FINISH, true)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+            }
+            val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
+                runCatching {
+                    ActivityOptions.makeBasic()
+                        .setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                        )
+                        .toBundle()
+                }.getOrNull()
+            } else null
+            val pi = PendingIntent.getActivity(
+                appCtx,
+                1096,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
+                    pi.send(appCtx, 0, intent, null, null, null, optionsBundle)
+                } else {
+                    pi.send()
+                }
+            }
+            runCatching {
+                if (optionsBundle != null) appCtx.startActivity(intent, optionsBundle)
+                else appCtx.startActivity(intent)
+            }
+            postFullScreenBlackoutFallback(appCtx, pi)
         }
 
         fun launch(context: Context) {
@@ -366,6 +409,17 @@ class BlackoutSleepActivity : Activity() {
         runCatching {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(FULLSCREEN_NOTIF_ID)
+        }
+
+        if (intent?.getBooleanExtra(EXTRA_GO_HOME_AND_FINISH, false) == true) {
+            // Đã chiếm quyền Foreground khỏi TikTok -> Đẩy về Màn hình chính Home thật rồi đóng ngay!
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            runCatching { startActivity(homeIntent) }
+            finishAndRemoveTask()
+            return
         }
 
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

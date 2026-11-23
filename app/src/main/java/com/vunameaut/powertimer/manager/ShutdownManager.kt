@@ -83,8 +83,18 @@ class ShutdownManager(private val context: Context) {
      * -> Máy tự tắt & khóa Lock Screen tự nhiên (TUYỆT ĐỐI KHÔNG gọi DevicePolicyManager.lockNow()
      *    vì hàm đó kích hoạt cờ STRONG_AUTH của Android làm vô hiệu hóa Vân tay ở lần mở máy sau!).
      */
-    private fun executeBankSafeSleep(): Boolean {
+    private suspend fun executeBankSafeSleep(): Boolean {
         return try {
+            val acc = PowerAccessibilityService.instance
+            if (acc != null) {
+                // Nếu người dùng đã bật Trợ năng: Về Home + Khóa màn hình thật trong 0.1s (giữ nguyên Vân tay)
+                // và TỰ ĐỘNG TẮT Trợ năng ngay sau 0.8s để dùng App Ngân hàng bình thường!
+                acc.performGoHome()
+                delay(250L)
+                if (acc.performLockScreen(autoDisableAfterLock = true)) {
+                    return true
+                }
+            }
             PowerAccessibilityService.disableAndHideForBanking(context)
             BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
             true
