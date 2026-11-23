@@ -78,28 +78,19 @@ class ShutdownManager(private val context: Context) {
     }
 
     /**
-     * Chế độ Tắt màn hình Chuẩn Ngân Hàng (Không dùng Trợ năng -> 100% App Ngân hàng & VNeID hoạt động bình thường):
-     * 1) Nếu đã bật Quản trị viên thiết bị: Thoát về Màn hình chính + khóa Lock Screen phần cứng tức thì (`dpm.lockNow()`).
-     * 2) Mặc định (chỉ cần quyền Hạ thời gian sáng + Hiển thị trên app khác):
-     *    Thoát ứng dụng video (TikTok/FB/YT) ra Màn hình chính thật + hạ thời gian chờ xuống mức tối thiểu
-     *    -> Máy tự tắt & khóa Lock Screen tự nhiên, giữ nguyên Vân tay / Khuôn mặt, KHÔNG dùng màn hình đen giả!
+     * Chế độ Tắt màn hình Chuẩn Ngân Hàng (Giữ nguyên 100% mở khóa Vân tay / Khuôn mặt):
+     * Thoát ứng dụng video (TikTok/FB/YT) ra Màn hình chính thật + hạ thời gian chờ xuống mức tối thiểu
+     * -> Máy tự tắt & khóa Lock Screen tự nhiên (TUYỆT ĐỐI KHÔNG gọi DevicePolicyManager.lockNow()
+     *    vì hàm đó kích hoạt cờ STRONG_AUTH của Android làm vô hiệu hóa Vân tay ở lần mở máy sau!).
      */
-    private suspend fun executeBankSafeSleep(): Boolean {
+    private fun executeBankSafeSleep(): Boolean {
         return try {
             PowerAccessibilityService.disableAndHideForBanking(context)
-            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
-            if (dpm.isAdminActive(adminComponent)) {
-                BlackoutSleepActivity.launchHomeScreenFromBackground(context)
-                delay(150L)
-                dpm.lockNow()
-            } else {
-                BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
-            }
+            BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
             true
         } catch (e: Throwable) {
             Log.e(TAG, "BankSafeSleep error: ${e.message}")
-            executeDeviceAdminLock(allowFallback = false)
+            false
         }
     }
 
