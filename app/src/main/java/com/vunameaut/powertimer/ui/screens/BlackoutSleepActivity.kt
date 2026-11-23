@@ -28,12 +28,10 @@ import android.widget.TextView
 import com.vunameaut.powertimer.R
 
 /**
- * Màn hình tối đen OLED 0% độ sáng kết hợp hạ thời gian chờ màn hình (SCREEN_OFF_TIMEOUT) xuống mức tối thiểu.
- * Hỗ trợ bật đè ngay lên trên Facebook / TikTok / YouTube đang phát từ dưới nền bằng 3 lớp:
- * 1. Màn hình đen Overlay OLED (nếu có quyền Hiển thị trên ứng dụng khác)
- * 2. Activity Launch từ nền với MODE_BACKGROUND_ACTIVITY_START_ALLOWED (Android 14+)
- * 3. FullScreenIntent Notification ưu tiên cao tự hủy sau khi tắt màn hình
- * -> Ép ứng dụng video chuyển sang nền (nhả FLAG_KEEP_SCREEN_ON & tự pause), giúp máy tự tắt màn hình chuẩn Ngân hàng!
+ * Điều phối thoát về Màn hình chính & Tắt màn hình an toàn Chuẩn Ngân Hàng:
+ * - TUYỆT ĐỐI KHÔNG giữ lớp phủ đen toàn màn hình đè lên app đang chạy (không gây kẹt cảm ứng hay video chạy ngầm).
+ * - Đưa máy về Màn hình chính (CATEGORY_HOME) để TikTok / Douyin / Facebook tự dừng video và nhả FLAG_KEEP_SCREEN_ON.
+ * - Khi mở Activity tắt màn hình (trường hợp fallback chưa bật Device Admin), chỉ cần chạm 1 lần bất kỳ đâu là thoát ngay.
  */
 class BlackoutSleepActivity : Activity() {
 
@@ -41,21 +39,97 @@ class BlackoutSleepActivity : Activity() {
         private const val TAG = "BlackoutSleepActivity"
         private const val PREFS_NAME = "bank_safe_sleep_prefs"
         private const val KEY_SAVED_TIMEOUT = "saved_screen_off_timeout"
-        private const val MIN_TIMEOUT_MS = 1000 // 1 giây (Android sẽ áp mức tối thiểu phần cứng ~5-10s)
+        private const val MIN_TIMEOUT_MS = 1000
         private const val FULLSCREEN_CHANNEL_ID = "blackout_sleep_channel"
         private const val FULLSCREEN_NOTIF_ID = 1099
 
-        @Volatile
-        private var overlayBlackView: View? = null
+        /**
+         * Đưa thiết bị về Màn hình chính (Home) từ dưới nền mà KHÔNG cần Trợ năng (Accessibility):
+         * Dùng một cửa sổ neo 1x1 pixel trong suốt trong 350ms (nếu đã có quyền Overlay) để Android
+         * BackgroundActivityStartController xác thực cửa sổ hiển thị hợp lệ, rồi mở CATEGORY_HOME.
+         * -> Ép TikTok / Douyin / Facebook rơi ngay vào onPause()/onStop(), dừng phát video 100%!
+         */
+        fun launchHomeScreenFromBackground(context: Context) {
+            val appCtx = context.applicationContext
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
+                runCatching {
+                    ActivityOptions.makeBasic()
+                        .setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                        )
+                        .toBundle()
+                }.getOrNull()
+            } else null
+
+            val homePi = PendingIntent.getActivity(
+                appCtx,
+                1097,
+                homeIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            if (Settings.canDrawOverlays(appCtx)) {
+                Handler(Looper.getMainLooper()).post {
+                    val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                    val anchorView = View(appCtx).apply { setBackgroundColor(Color.TRANSPARENT) }
+                    val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_PHONE
+                    }
+                    val params = WindowManager.LayoutParams(
+                        1,
+                        1,
+                        type,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                        PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.START
+                    }
+                    runCatching { wm?.addView(anchorView, params) }
+
+                    dispatchStartHome(appCtx, homeIntent, homePi, optionsBundle)
+
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        runCatching { wm?.removeView(anchorView) }
+                    }, 350L)
+                }
+            } else {
+                dispatchStartHome(appCtx, homeIntent, homePi, optionsBundle)
+            }
+        }
+
+        private fun dispatchStartHome(
+            appCtx: Context,
+            homeIntent: Intent,
+            homePi: PendingIntent,
+            optionsBundle: Bundle?
+        ) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
+                    homePi.send(appCtx, 0, homeIntent, null, null, null, optionsBundle)
+                } else {
+                    homePi.send()
+                }
+            }
+            runCatching {
+                if (optionsBundle != null) {
+                    appCtx.startActivity(homeIntent, optionsBundle)
+                } else {
+                    appCtx.startActivity(homeIntent)
+                }
+            }
+        }
 
         fun launch(context: Context) {
             val appCtx = context.applicationContext
             applyMinimumScreenTimeout(appCtx)
 
-            // Lớp 1: Phủ màn hình đen OLED 0% tức thì nếu đã có quyền Overlay (đè mượt lên Facebook / TikTok)
-            showBlackoutOverlayIfPermitted(appCtx)
-
-            // Lớp 2 & 3: Mở BlackoutSleepActivity lên Foreground để ép app video vào onPause() & nhả FLAG_KEEP_SCREEN_ON
             val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -82,105 +156,24 @@ class BlackoutSleepActivity : Activity() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // Thử gửi PendingIntent kèm quyền Background Start (Android 14+)
-            val sentByPi = runCatching {
+            runCatching {
                 if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
                     pi.send(appCtx, 0, intent, null, null, null, optionsBundle)
                 } else {
                     pi.send()
                 }
-                true
-            }.getOrDefault(false)
-
-            // Fallback trực tiếp startActivity
+            }
             runCatching {
                 if (optionsBundle != null) {
                     appCtx.startActivity(intent, optionsBundle)
-                } else if (!sentByPi) {
+                } else {
                     appCtx.startActivity(intent)
                 }
             }.onFailure {
                 Log.w(TAG, "Direct startActivity failed: ${it.message}")
             }
 
-            // Lớp 3: FullScreenIntent dự phòng khi Android/OriginOS chặn startActivity từ app nền (chưa bật Overlay)
             postFullScreenBlackoutFallback(appCtx, pi)
-        }
-
-        private fun showBlackoutOverlayIfPermitted(appCtx: Context) {
-            if (!Settings.canDrawOverlays(appCtx)) return
-            Handler(Looper.getMainLooper()).post {
-                if (overlayBlackView != null) return@post
-                val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return@post
-                val view = FrameLayout(appCtx).apply {
-                    setBackgroundColor(Color.BLACK)
-                    val label = TextView(appCtx).apply {
-                        text = "Đang tắt màn hình (Chạm 2 lần để hủy)"
-                        setTextColor(Color.argb(42, 255, 255, 255))
-                        textSize = 11f
-                        gravity = Gravity.CENTER
-                    }
-                    addView(
-                        label,
-                        FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            Gravity.CENTER
-                        )
-                    )
-                    Handler(Looper.getMainLooper()).postDelayed({ label.visibility = View.GONE }, 1500L)
-
-                    var lastTap = 0L
-                    setOnClickListener {
-                        val now = System.currentTimeMillis()
-                        if (now - lastTap < 600L) {
-                            dismissBlackoutOverlay(appCtx)
-                            restoreOriginalScreenTimeout(appCtx)
-                        }
-                        lastTap = now
-                    }
-                }
-
-                val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                }
-                val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    type,
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                    PixelFormat.OPAQUE
-                ).apply {
-                    screenBrightness = 0.0f
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        layoutInDisplayCutoutMode =
-                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    }
-                }
-
-                runCatching {
-                    wm.addView(view, params)
-                    overlayBlackView = view
-                }
-                // Tự động dọn overlay sau tối đa 30s nếu máy không phát ACTION_SCREEN_OFF
-                Handler(Looper.getMainLooper()).postDelayed({
-                    dismissBlackoutOverlay(appCtx)
-                    restoreOriginalScreenTimeout(appCtx)
-                }, 30_000L)
-            }
-        }
-
-        fun dismissBlackoutOverlay(appCtx: Context) {
-            Handler(Looper.getMainLooper()).post {
-                val view = overlayBlackView ?: return@post
-                val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-                runCatching { wm?.removeView(view) }
-                overlayBlackView = null
-            }
         }
 
         private fun postFullScreenBlackoutFallback(appCtx: Context, fullScreenPi: PendingIntent) {
@@ -205,7 +198,7 @@ class BlackoutSleepActivity : Activity() {
                 }
                 builder.setSmallIcon(R.drawable.ic_stat_timer)
                     .setContentTitle("Đang tắt màn hình...")
-                    .setContentText("Chạm để hủy hoặc chờ 5 giây máy tự khóa")
+                    .setContentText("Chạm 1 lần để hủy hoặc chờ vài giây máy tự khóa")
                     .setFullScreenIntent(fullScreenPi, true)
                     .setAutoCancel(true)
                     .setCategory(Notification.CATEGORY_ALARM)
@@ -280,7 +273,6 @@ class BlackoutSleepActivity : Activity() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                dismissBlackoutOverlay(applicationContext)
                 restoreOriginalScreenTimeout(applicationContext)
                 runCatching {
                     val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -301,7 +293,7 @@ class BlackoutSleepActivity : Activity() {
 
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val params = window.attributes
-        params.screenBrightness = 0.0f
+        params.screenBrightness = 0.01f
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -313,9 +305,9 @@ class BlackoutSleepActivity : Activity() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             val hint = TextView(this@BlackoutSleepActivity).apply {
-                text = "Đang tắt màn hình (Chạm 2 lần để hủy)"
-                setTextColor(Color.argb(38, 255, 255, 255))
-                textSize = 11f
+                text = "Đang tắt màn hình...\nChạm 1 lần vào màn hình để hủy & quay lại"
+                setTextColor(Color.argb(115, 255, 255, 255))
+                textSize = 13f
                 gravity = Gravity.CENTER
             }
             addView(
@@ -327,17 +319,10 @@ class BlackoutSleepActivity : Activity() {
                 )
             )
 
-            handler.postDelayed({ hint.visibility = View.GONE }, 1500L)
-
-            var lastTapTime = 0L
+            // Chạm 1 lần duy nhất ở bất kỳ đâu để hủy tắt màn hình và thoát ngay, tuyệt đối không gây kẹt màn hình!
             setOnClickListener {
-                val now = System.currentTimeMillis()
-                if (now - lastTapTime < 600L) {
-                    dismissBlackoutOverlay(applicationContext)
-                    restoreOriginalScreenTimeout(applicationContext)
-                    finishAndRemoveTask()
-                }
-                lastTapTime = now
+                restoreOriginalScreenTimeout(applicationContext)
+                finishAndRemoveTask()
             }
         }
         setContentView(root)
@@ -354,9 +339,11 @@ class BlackoutSleepActivity : Activity() {
         }
 
         handler.postDelayed({
-            dismissBlackoutOverlay(applicationContext)
             restoreOriginalScreenTimeout(applicationContext)
-        }, 25_000L)
+            if (!isFinishing && !isDestroyed) {
+                finishAndRemoveTask()
+            }
+        }, 20_000L)
     }
 
     private fun hideSystemUI(view: View) {
@@ -389,7 +376,6 @@ class BlackoutSleepActivity : Activity() {
             }
             receiverRegistered = false
         }
-        dismissBlackoutOverlay(applicationContext)
         restoreOriginalScreenTimeout(applicationContext)
     }
 }

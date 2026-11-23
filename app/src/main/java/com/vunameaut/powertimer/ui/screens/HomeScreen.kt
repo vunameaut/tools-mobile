@@ -321,19 +321,28 @@ fun HomeScreen(
             }
 
             // Gợi ý cấp quyền tương ứng với chế độ đang chọn
+            if (selectedMode == ShutdownMode.BANK_SAFE_SLEEP && !permissions.isDeviceAdminActive) {
+                PermissionItem(
+                    title = "Bật Khóa màn hình thật (Chuẩn Ngân Hàng - Lock Screen)",
+                    description = "Cấp quyền Quản trị viên thiết bị để tắt & khóa hẳn màn hình điện thoại thật trong 0.1s (không dùng Trợ năng, không tạo màn hình đen giả, dùng App Ngân hàng bình thường).",
+                    isGranted = false,
+                    onGrantClick = { viewModel.requestDeviceAdmin() },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
             if (selectedMode.requiresWriteSettings && !permissions.canWriteSettings) {
                 PermissionItem(
-                    title = "Cấp quyền Hạ thời gian sáng (Chuẩn Ngân Hàng)",
-                    description = "Cho phép ứng dụng tự hạ thời gian chờ màn hình khi hết giờ (100% không dùng Trợ năng, không bị App Ngân hàng chặn, giữ nguyên Vân tay).",
+                    title = "Cấp quyền Hạ thời gian sáng (Dự phòng)",
+                    description = "Cho phép ứng dụng tự hạ thời gian chờ màn hình xuống mức tối thiểu khi dùng chế độ dự phòng.",
                     isGranted = false,
                     onGrantClick = { viewModel.openWriteSettingsPermission() },
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
             }
-            if (selectedMode == ShutdownMode.BANK_SAFE_SLEEP && !canDrawOverlays) {
+            if ((selectedMode == ShutdownMode.BANK_SAFE_SLEEP || selectedMode == ShutdownMode.MEDIA_ONLY) && !canDrawOverlays) {
                 PermissionItem(
-                    title = "Bật Hiển thị trên ứng dụng khác (Khi xem Facebook / TikTok)",
-                    description = "Giúp phủ màn hình đen OLED đè lên Facebook/TikTok khi hết giờ để tắt màn hình chuẩn Ngân hàng mượt mà ngay cả khi đang phát video.",
+                    title = "Bật Hiển thị trên ứng dụng khác (Để dừng hẳn TikTok / Facebook)",
+                    description = "Cho phép thoát ứng dụng video (TikTok, Douyin, Facebook) về Màn hình chính khi hết giờ giúp video dừng phát 100%.",
                     isGranted = false,
                     onGrantClick = { SystemDynamicIslandManager.openOverlayPermissionSettings(context) },
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -526,7 +535,7 @@ fun HomeScreen(
 
                 ShutdownMode.entries.forEach { mode ->
                     val isAvailable = when (mode) {
-                        ShutdownMode.BANK_SAFE_SLEEP -> permissions.canWriteSettings
+                        ShutdownMode.BANK_SAFE_SLEEP -> permissions.isDeviceAdminActive || permissions.canWriteSettings
                         ShutdownMode.DEVICE_ADMIN -> permissions.isDeviceAdminActive
                         ShutdownMode.MEDIA_ONLY -> true
                         ShutdownMode.ACCESSIBILITY, ShutdownMode.HOME_AND_LOCK -> permissions.isAccessibilityEnabled
