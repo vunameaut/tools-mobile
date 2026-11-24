@@ -495,23 +495,42 @@ class MoneySoundboxService : NotificationListenerService() {
         }
 
         /**
-         * Lọc bỏ toàn bộ Số tài khoản (STK/TK) và Số dư (SD/Số dư khả dụng) khỏi chuỗi thông báo
-         * để tuyệt đối KHÔNG BAO GIỜ đọc nhầm số tài khoản hay số dư còn lại.
+         * Lọc bỏ toàn bộ Số tài khoản (STK/TK), Số thẻ, Tên điểm chấp nhận thẻ (chứa SĐT như +18336629873)
+         * và Số dư (SD/Số dư khả dụng) khỏi chuỗi thông báo để tuyệt đối KHÔNG BAO GIỜ đọc nhầm.
          */
         private fun stripAccountAndBalanceNoise(raw: String): String {
             var cleaned = raw.replace('\n', ' ').trim()
             if (cleaned.isBlank()) return ""
 
-            // 1. Xóa cụm Số tài khoản (TK / STK / Tài khoản / Thẻ / Card) kèm dãy số/chữ cái che dấu (ví dụ TK VCB 0011001234567, TK 0384xxxx89)
+            // 1. Xóa cụm Số tài khoản / Số thẻ kèm nhiều từ thương hiệu và dấu che (VD: Thẻ VCB Visa 452404...4864, TK 0384xxxx89)
             cleaned = cleaned.replace(
                 Regex(
-                    """(?:số tài khoản|so tai khoan|tài khoản|tai khoan|\bSTK\b|\bTK\b|\bthẻ\b|\bcard\b)\s*(?:[A-Za-z]{2,12}\s+)?[:#\-]?\s*[0-9xX*]{4,19}""",
+                    """(?:số tài khoản|so tai khoan|tài khoản|tai khoan|\bSTK\b|\bTK\b|\bthẻ\b|\bcard\b)(?:\s+[A-Za-z0-9]{1,15}){0,4}\s*[:#\-]?\s*[0-9xX*.…]{4,22}""",
                     RegexOption.IGNORE_CASE
                 ),
                 " "
             )
+            cleaned = cleaned.replace(
+                Regex("""\b\d{4,6}[.*xX…]+\d{3,4}\b"""),
+                " "
+            )
 
-            // 2. Xóa cụm Số dư cuối / Số dư khả dụng / SD: <số tiền> (không có dấu +/- đứng trước số tiền giao dịch)
+            // 2. Xóa tên merchant/cửa hàng đứng giữa "sử dụng tại ..." và "số tiền / số dư / lúc ..." (tránh dính SĐT quốc tế như +18336629873 US)
+            cleaned = cleaned.replace(
+                Regex(
+                    """(?:sử dụng tại|su dung tai|chi tiêu tại|chi tieu tai|thanh toán tại|thanh toan tai|giao dịch tại|giao dich tai|mua hàng tại|mua hang tai)\s+.*?(?=\bsố tiền\b|\bso tien\b|\bsố dư\b|\bso du\b|\bvào lúc\b|\bvao luc\b)""",
+                    RegexOption.IGNORE_CASE
+                ),
+                " sử dụng thẻ "
+            )
+
+            // 3. Xóa mọi số điện thoại quốc tế dạng +<9..15 chữ số> không có đơn vị tiền tệ VND/đ đứng sau
+            cleaned = cleaned.replace(
+                Regex("""(?<![0-9])\+\d{9,15}\b(?!\s*(?:VND|VNĐ|đ\b|d\b|đồng))""", RegexOption.IGNORE_CASE),
+                " "
+            )
+
+            // 4. Xóa cụm Số dư cuối / Số dư khả dụng / SD: <số tiền> (không có dấu +/- đứng trước số tiền giao dịch)
             cleaned = cleaned.replace(
                 Regex(
                     """(?:số dư khả dụng|so du kha dung|số dư cuối|so du cuoi|số dư ví|so du vi|số dư|so du|\bSD\b|\bbalance\b|\bBal\b)\s*[:=]?\s*(?:VND|VNĐ|đ|d)?\s*(?![+\-])\d{1,3}(?:[.,]\d{3})+(?:\s*(?:VND|VNĐ|đ|d|đồng))?""",
@@ -533,11 +552,55 @@ class MoneySoundboxService : NotificationListenerService() {
         /**
          * Phân tích giao dịch Ngân hàng / Ví điện tử:
          * - Trả về chính xác là NHẬN ĐƯỢC (`INCOMING`) hay CHUYỂN ĐI (`OUTGOING`) và SỐ TIỀN GIAO DỊCH.
-         * - Đã lọc bỏ hoàn toàn Số tài khoản (STK) và Số dư (SD) để không bao giờ lấy nhầm.
+         * - Đã lọc bỏ hoàn toàn Số tài khoản (STK), Số thẻ, SĐT merchant và Số dư (SD) để không bao giờ lấy nhầm.
          */
         fun parseBankTransaction(title: String, body: String): ParsedBankTransaction? {
-            val cleaned = stripAccountAndBalanceNoise("$title $body")
+            val rawCombined = "$title $body".replace('\n', ' ').trim()
+            if (rawCombined.isBlank()) return null
+
+            val isCardNotification = rawCombined.contains(
+                Regex(
+                    """(?:\bthẻ\b|\bcard\b|visa|mastercard|jcb|amex|sử dụng tại|su dung tai|sử dụng thẻ|su dung the|giao dịch thẻ|giao dich the|thanh toán thẻ|thanh toan the)""",
+                    RegexOption.IGNORE_CASE
+                )
+            )
+
+            val cleaned = stripAccountAndBalanceNoise(rawCombined)
             if (cleaned.isBlank()) return null
+
+            // 0. Ưu tiên trường "số tiền" tường minh (đặc biệt với thông báo Thẻ VCB: "Thẻ ... sử dụng tại ... số tiền 00 USD / 150,000 VND")
+            val explicitAmountPattern = Regex(
+                """(?:số tiền|so tien)\s*(?:GD|giao dịch|giao dich|thanh toán|thanh toan)?\s*[:=]?\s*([+\-])?\s*(VND|VNĐ|USD|\$|EUR|JPY|GBP|đ|d)?\s*(\d{1,3}(?:[.,]\d{3})+|\d{1,12})(?:[.,]\d{1,2}(?!\d))?\s*(VND|VNĐ|đ|d|đồng|USD|US\b|EUR|JPY|GBP|SGD|AUD|CAD|THB|KRW|CNY)?""",
+                RegexOption.IGNORE_CASE
+            )
+            val explicitMatch = explicitAmountPattern.find(cleaned)
+            if (explicitMatch != null) {
+                val sign = explicitMatch.groupValues[1]
+                val prefixUnit = explicitMatch.groupValues[2]
+                val rawNum = explicitMatch.groupValues[3]
+                val suffixUnit = explicitMatch.groupValues[4]
+                val unit = suffixUnit.ifBlank { prefixUnit }
+                val digits = rawNum.replace(Regex("[^0-9]"), "")
+                val value = digits.toLongOrNull() ?: 0L
+                val isForeignCurrency = unit.isNotBlank() && !unit.contains(Regex("""^(?:VND|VNĐ|đ|d|đồng)$""", RegexOption.IGNORE_CASE))
+                if (value == 0L || isForeignCurrency || value < 1_000L) {
+                    return null
+                }
+                if (value <= 50_000_000_000L) {
+                    val isOut = when {
+                        isCardNotification -> true
+                        sign == "-" -> true
+                        sign == "+" -> false
+                        else -> cleaned.contains(
+                            Regex("""(?:\btrừ\b|\bgiam\b|\bgiảm\b|thanh toán|thanh toan|chuyển đi|chuyen di|rút tiền|rut tien|chi tiêu|chi tieu|ghi nợ|ghi no)""", RegexOption.IGNORE_CASE)
+                        )
+                    }
+                    return ParsedBankTransaction(
+                        if (isOut) BankTxDirection.OUTGOING else BankTxDirection.INCOMING,
+                        value
+                    )
+                }
+            }
 
             // 1. Mẫu có dấu cộng rõ ràng (+150,000 VND, + 150.000đ, PS:+50,000, GD: +200.000VND, +VND 50,000...)
             val plusPattern = Regex(
@@ -550,12 +613,19 @@ class MoneySoundboxService : NotificationListenerService() {
                 val hasSeparator = rawNum.contains('.') || rawNum.contains(',')
                 val hasCurrency = fullMatch.contains(Regex("""(?:VND|VNĐ|đ|đồng)""", RegexOption.IGNORE_CASE))
                 val digits = rawNum.replace(Regex("[^0-9]"), "")
-                if (!hasSeparator && !hasCurrency && digits.startsWith("84") && digits.length in 10..11) {
-                    continue
+                if (!hasSeparator && !hasCurrency) {
+                    if (digits.length >= 9) continue
+                    val prefixStart = (match.range.first - 24).coerceAtLeast(0)
+                    val prefixContext = cleaned.substring(prefixStart, match.range.first)
+                    val hasBankPrefix = prefixContext.contains(
+                        Regex("""(?:\bSD\b|\bTK\b|\bGD\b|\bPS\b|số tiền|so tien|biến động|bien dong|số dư|so du)""", RegexOption.IGNORE_CASE)
+                    )
+                    if (!hasBankPrefix) continue
                 }
                 val value = digits.toLongOrNull() ?: 0L
                 if (value in 1_000L..50_000_000_000L) {
-                    return ParsedBankTransaction(BankTxDirection.INCOMING, value)
+                    val dir = if (isCardNotification) BankTxDirection.OUTGOING else BankTxDirection.INCOMING
+                    return ParsedBankTransaction(dir, value)
                 }
             }
 
@@ -619,7 +689,7 @@ class MoneySoundboxService : NotificationListenerService() {
                     val digits = fbMatch.groupValues[1].replace(Regex("[^0-9]"), "")
                     val value = digits.toLongOrNull() ?: 0L
                     if (value in 1_000L..50_000_000_000L) {
-                        val isOut = cleaned.contains(
+                        val isOut = isCardNotification || cleaned.contains(
                             Regex("""(?:\btrừ\b|\bgiam\b|\bgiảm\b|thanh toán|thanh toan|chuyển đi|chuyen di|rút tiền|rut tien)""", RegexOption.IGNORE_CASE)
                         )
                         return ParsedBankTransaction(
