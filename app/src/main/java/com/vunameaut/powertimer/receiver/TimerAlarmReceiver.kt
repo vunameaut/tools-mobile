@@ -6,11 +6,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import com.vunameaut.powertimer.data.model.ShutdownMode
-import com.vunameaut.powertimer.manager.ShutdownManager
 import com.vunameaut.powertimer.service.TimerForegroundService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class TimerAlarmReceiver : BroadcastReceiver() {
 
@@ -23,41 +19,30 @@ class TimerAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_TIMER_EXPIRED) {
-            Log.d(TAG, "Exact Alarm expired! Initiating shutdown sequence before stopping service...")
+            Log.d(TAG, "Backup Exact Alarm fired! Forwarding to TimerForegroundService Enforcer...")
 
-            val pendingResult = goAsync()
             val appCtx = context.applicationContext
             val powerManager = appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager
             val wakeLock = powerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
-                "PowerTimer:AlarmWakeLock"
+                "PowerTimer:AlarmReceiverLock"
             )
-            wakeLock.acquire(15000L)
+            wakeLock.acquire(5_000L)
 
             val modeName = intent.getStringExtra(EXTRA_SHUTDOWN_MODE)
-            val mode = try {
+            val mode = runCatching {
                 if (modeName != null) ShutdownMode.valueOf(modeName) else ShutdownMode.BANK_SAFE_SLEEP
-            } catch (_: Exception) {
-                ShutdownMode.BANK_SAFE_SLEEP
-            }
+            }.getOrDefault(ShutdownMode.BANK_SAFE_SLEEP)
             val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
 
-            val shutdownManager = ShutdownManager(appCtx)
-            CoroutineScope(Dispatchers.Main).launch {
-                try {
-                    // Thực thi Tắt màn hình & Dừng nhạc TRƯỚC, rồi mới dừng TimerForegroundService
-                    // để tránh hủy mất coroutine dở dang khiến âm lượng không khôi phục / màn hình không tắt!
-                    shutdownManager.executeShutdown(
-                        mode = mode,
-                        fadeAudio = fadeAudio
-                    )
-                    TimerForegroundService.stopTimer(appCtx)
-                } finally {
-                    if (wakeLock.isHeld) {
-                        runCatching { wakeLock.release() }
-                    }
-                    runCatching { pendingResult.finish() }
-                }
+            runCatching {
+                TimerForegroundService.triggerFallbackExpiry(appCtx, mode, fadeAudio)
+            }.onFailure {
+                Log.e(TAG, "Failed to hand off to TimerForegroundService: ${it.message}")
+            }
+
+            if (wakeLock.isHeld) {
+                runCatching { wakeLock.release() }
             }
         }
     }

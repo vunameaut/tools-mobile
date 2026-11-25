@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.Toast
@@ -25,22 +26,31 @@ import com.vunameaut.powertimer.MainActivity
 import com.vunameaut.powertimer.R
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.data.model.TimerState
+import com.vunameaut.powertimer.manager.PersistedTimerConfig
+import com.vunameaut.powertimer.manager.PollDecision
+import com.vunameaut.powertimer.manager.RecoveryDecision
 import com.vunameaut.powertimer.manager.ShakeDetector
+import com.vunameaut.powertimer.manager.ShutdownEnforcementPolicy
 import com.vunameaut.powertimer.manager.ShutdownManager
+import com.vunameaut.powertimer.manager.TimerPersistenceManager
 import com.vunameaut.powertimer.receiver.TimerAlarmReceiver
+import com.vunameaut.powertimer.ui.screens.BlackoutSleepActivity
 import com.vunameaut.powertimer.widget.ToolsHubAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class TimerForegroundService : Service() {
 
     companion object {
+        private const val TAG = "TimerService"
         const val CHANNEL_ID = "power_timer_channel"
         const val NOTIFICATION_ID = 101
 
@@ -48,12 +58,17 @@ class TimerForegroundService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_ADD_10_MIN = "ACTION_ADD_10_MIN"
         const val ACTION_LOCK_NOW = "ACTION_LOCK_NOW"
+        const val ACTION_ALARM_CLOCK_TRIGGERED = "ACTION_ALARM_CLOCK_TRIGGERED"
+        const val ACTION_ALARM_FALLBACK_EXPIRED = "ACTION_ALARM_FALLBACK_EXPIRED"
+        const val ACTION_CANCEL_ENFORCEMENT = "ACTION_CANCEL_ENFORCEMENT"
+        const val ACTION_REVIVE_PERSISTED = "ACTION_REVIVE_PERSISTED"
 
         const val EXTRA_SECONDS = "EXTRA_SECONDS"
         const val EXTRA_MODE = "EXTRA_MODE"
         const val EXTRA_FADE_AUDIO = "EXTRA_FADE_AUDIO"
         const val EXTRA_WARNING = "EXTRA_WARNING"
         const val EXTRA_SHAKE = "EXTRA_SHAKE"
+        const val EXTRA_WAS_INTERACTIVE = "EXTRA_WAS_INTERACTIVE"
 
         private val _timerFlow = MutableStateFlow(TimerState())
         val timerFlow = _timerFlow.asStateFlow()
@@ -64,7 +79,7 @@ class TimerForegroundService : Service() {
             mode: ShutdownMode,
             fadeAudio: Boolean = true,
             playWarning: Boolean = true,
-            shakeToExtend: Boolean = true
+            shakeToExtend: Boolean = false
         ) {
             val intent = Intent(context, TimerForegroundService::class.java).apply {
                 action = ACTION_START
@@ -74,14 +89,12 @@ class TimerForegroundService : Service() {
                 putExtra(EXTRA_WARNING, playWarning)
                 putExtra(EXTRA_SHAKE, shakeToExtend)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            startForegroundCompat(context, intent)
         }
 
         fun stopTimer(context: Context) {
+            TimerPersistenceManager.from(context).clearActiveTimer()
+            TimerPersistenceManager.from(context).clearShutdownEnforcing()
             val intent = Intent(context, TimerForegroundService::class.java).apply {
                 action = ACTION_STOP
             }
@@ -99,6 +112,64 @@ class TimerForegroundService : Service() {
             runCatching { context.startService(intent) }
         }
 
+        fun notifyAlarmClockTriggered(
+            context: Context,
+            mode: ShutdownMode,
+            fadeAudio: Boolean,
+            wasInteractive: Boolean
+        ) {
+            val intent = Intent(context, TimerForegroundService::class.java).apply {
+                action = ACTION_ALARM_CLOCK_TRIGGERED
+                putExtra(EXTRA_MODE, mode.name)
+                putExtra(EXTRA_FADE_AUDIO, fadeAudio)
+                putExtra(EXTRA_WAS_INTERACTIVE, wasInteractive)
+            }
+            startForegroundCompat(context, intent)
+        }
+
+        fun triggerFallbackExpiry(
+            context: Context,
+            mode: ShutdownMode,
+            fadeAudio: Boolean
+        ) {
+            val intent = Intent(context, TimerForegroundService::class.java).apply {
+                action = ACTION_ALARM_FALLBACK_EXPIRED
+                putExtra(EXTRA_MODE, mode.name)
+                putExtra(EXTRA_FADE_AUDIO, fadeAudio)
+            }
+            startForegroundCompat(context, intent)
+        }
+
+        fun cancelEnforcementByUser(context: Context) {
+            TimerPersistenceManager.from(context).clearActiveTimer()
+            TimerPersistenceManager.from(context).clearShutdownEnforcing()
+            val intent = Intent(context, TimerForegroundService::class.java).apply {
+                action = ACTION_CANCEL_ENFORCEMENT
+            }
+            runCatching { context.startService(intent) }
+        }
+
+        fun reviveIfPersistedTimerActive(context: Context) {
+            val persistence = TimerPersistenceManager.from(context)
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isInteractive = pm?.isInteractive ?: true
+            when (persistence.decideRecoveryAction(System.currentTimeMillis(), isInteractive)) {
+                is RecoveryDecision.ResumeCountdown,
+                is RecoveryDecision.ExecuteImmediateShutdown -> {
+                    val intent = Intent(context, TimerForegroundService::class.java).apply {
+                        action = ACTION_REVIVE_PERSISTED
+                    }
+                    startForegroundCompat(context, intent)
+                }
+                is RecoveryDecision.SilentCleanupStaleOffScreen -> {
+                    persistence.clearActiveTimer()
+                    persistence.clearShutdownEnforcing()
+                    BlackoutSleepActivity.restoreOriginalScreenTimeout(context)
+                }
+                RecoveryDecision.None -> Unit
+            }
+        }
+
         fun updatePresetSeconds(context: Context, seconds: Long, mode: ShutdownMode? = null) {
             val current = _timerFlow.value
             if (!current.isRunning) {
@@ -110,31 +181,56 @@ class TimerForegroundService : Service() {
                 SystemDynamicIslandManager.refreshOverlay(context.applicationContext, _timerFlow.value)
             }
         }
+
+        private fun startForegroundCompat(context: Context, intent: Intent) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                runCatching { context.startForegroundService(intent) }
+                    .onFailure { context.startService(intent) }
+            } else {
+                context.startService(intent)
+            }
+        }
     }
 
-    private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var timerJob: Job? = null
+    private var enforcementJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var shakeDetector: ShakeDetector? = null
     private lateinit var shutdownManager: ShutdownManager
     private lateinit var notificationManager: NotificationManager
+    private lateinit var persistence: TimerPersistenceManager
 
-    // Lưu mốc thời gian thực kết thúc hẹn giờ (Epoch ms) để không bao giờ bị đứng thời gian khi CPU vào Deep Sleep
+    private val enforcementStarted = AtomicBoolean(false)
+    private var foregroundStarted = false
+
     @Volatile
     private var targetEndEpochMs: Long = 0L
 
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    if (enforcementStarted.get()) {
+                        shutdownManager.restoreTimeoutIfModified()
+                    } else {
+                        // Người dùng tự tắt màn hình trước khi hết giờ -> nhả ngay WakeLock để tiết kiệm pin 0%!
+                        releaseWakeLockSafely()
+                    }
+                }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    if (enforcementStarted.get()) return
                     if (_timerFlow.value.isRunning && targetEndEpochMs > 0L) {
                         val now = System.currentTimeMillis()
-                        val remaining = ((targetEndEpochMs - now + 999L) / 1000L).coerceAtLeast(0L)
+                        val remaining = TimerPersistenceManager.computeRemainingSeconds(now, targetEndEpochMs)
+                        val overdueMs = now - targetEndEpochMs
                         if (remaining <= 0L) {
-                            // Hẹn giờ đã hết từ lúc màn hình tắt trong đêm -> Dừng sạch sẽ ngay khi mở máy, không khóa lại màn hình
-                            stopCountdown()
+                            if (overdueMs > TimerPersistenceManager.STALE_OFF_SCREEN_GRACE_MS) {
+                                // Hẹn giờ đã hết từ lâu khi màn hình đang tắt trong đêm -> dọn sạch khi sáng mở máy, không khóa lại!
+                                stopCountdown()
+                            }
                         } else {
-                            // Đồng bộ lại ngay số giây thực tế còn lại trên màn hình
+                            renewCountdownWakeLock()
                             _timerFlow.value = _timerFlow.value.copy(remainingSeconds = remaining)
                             NativeMediaIslandBridge.startOrUpdate(
                                 applicationContext,
@@ -156,10 +252,13 @@ class TimerForegroundService : Service() {
         super.onCreate()
         shutdownManager = ShutdownManager(applicationContext)
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        persistence = TimerPersistenceManager.from(applicationContext)
         createNotificationChannel()
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PowerTimer:ServiceWakeLock")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PowerTimer:ServiceWakeLock").apply {
+            setReferenceCounted(false)
+        }
 
         runCatching {
             val filter = IntentFilter().apply {
@@ -178,14 +277,13 @@ class TimerForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         timerJob?.cancel()
+        enforcementJob?.cancel()
         shakeDetector?.stop()
-        cancelExactAlarm()
         NativeMediaIslandBridge.stop()
         runCatching { unregisterReceiver(screenStateReceiver) }
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        releaseWakeLockSafely()
         targetEndEpochMs = 0L
+        foregroundStarted = false
         _timerFlow.value = TimerState()
         SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
         ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
@@ -194,41 +292,83 @@ class TimerForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null || intent.action == ACTION_REVIVE_PERSISTED) {
+            handleServiceRevive()
+            return START_STICKY
+        }
+
+        when (intent.action) {
             ACTION_START -> {
                 val seconds = intent.getLongExtra(EXTRA_SECONDS, 1800L)
                 val modeName = intent.getStringExtra(EXTRA_MODE) ?: ShutdownMode.BANK_SAFE_SLEEP.name
                 val mode = runCatching { ShutdownMode.valueOf(modeName) }.getOrDefault(ShutdownMode.BANK_SAFE_SLEEP)
                 val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
                 val playWarning = intent.getBooleanExtra(EXTRA_WARNING, true)
-                val shakeToExtend = intent.getBooleanExtra(EXTRA_SHAKE, true)
+                val shakeToExtend = intent.getBooleanExtra(EXTRA_SHAKE, false)
 
                 startCountdown(seconds, mode, fadeAudio, playWarning, shakeToExtend)
             }
-            ACTION_STOP -> {
+            ACTION_STOP, ACTION_CANCEL_ENFORCEMENT -> {
+                shutdownManager.restoreTimeoutIfModified()
+                shutdownManager.releaseHeldAudioFocus()
                 stopCountdown()
             }
             ACTION_ADD_10_MIN -> {
                 handleExtendTenMinutes()
             }
             ACTION_LOCK_NOW -> {
-                val current = _timerFlow.value
-                val mode = current.selectedMode
-                CoroutineScope(Dispatchers.Main).launch {
-                    shutdownManager.executeShutdown(mode, fadeAudio = false)
-                    stopCountdown()
-                }
+                val mode = _timerFlow.value.selectedMode
+                ensureForegroundReady(0L, mode)
+                launchShutdownEnforcement(mode, fadeAudio = false)
+            }
+            ACTION_ALARM_CLOCK_TRIGGERED, ACTION_ALARM_FALLBACK_EXPIRED -> {
+                val modeName = intent.getStringExtra(EXTRA_MODE)
+                val fallbackMode = persistence.loadActiveTimer()?.mode ?: _timerFlow.value.selectedMode
+                val mode = runCatching {
+                    if (modeName != null) ShutdownMode.valueOf(modeName) else fallbackMode
+                }.getOrDefault(fallbackMode)
+                val fadeAudio = intent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
+                ensureForegroundReady(0L, mode)
+                launchShutdownEnforcement(mode, fadeAudio)
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
+    }
+
+    private fun handleServiceRevive() {
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val isInteractive = pm?.isInteractive ?: true
+        when (val decision = persistence.decideRecoveryAction(System.currentTimeMillis(), isInteractive)) {
+            is RecoveryDecision.ResumeCountdown -> {
+                val cfg = decision.config
+                startCountdown(
+                    seconds = decision.remainingSeconds,
+                    mode = cfg.mode,
+                    fadeAudio = cfg.fadeAudio,
+                    playWarning = cfg.playWarning,
+                    shakeToExtend = cfg.shakeToExtend,
+                    persistedTotalSeconds = cfg.totalSeconds,
+                    targetEpochOverride = cfg.targetEndEpochMs
+                )
+            }
+            is RecoveryDecision.ExecuteImmediateShutdown -> {
+                ensureForegroundReady(0L, decision.config.mode)
+                launchShutdownEnforcement(decision.config.mode, decision.config.fadeAudio)
+            }
+            is RecoveryDecision.SilentCleanupStaleOffScreen,
+            RecoveryDecision.None -> {
+                ensureForegroundReady(0L, ShutdownMode.BANK_SAFE_SLEEP)
+                stopCountdown()
+            }
+        }
     }
 
     private fun handleExtendTenMinutes() {
         val current = _timerFlow.value
-        if (current.isRunning) {
+        if (current.isRunning && !enforcementStarted.get()) {
             val now = System.currentTimeMillis()
             val currentRealRemaining = if (targetEndEpochMs > now) {
-                ((targetEndEpochMs - now + 999L) / 1000L)
+                TimerPersistenceManager.computeRemainingSeconds(now, targetEndEpochMs)
             } else {
                 current.remainingSeconds
             }
@@ -236,13 +376,24 @@ class TimerForegroundService : Service() {
             val newRemaining = currentRealRemaining + 600L
             targetEndEpochMs = now + newRemaining * 1000L
 
+            persistence.saveActiveTimer(
+                PersistedTimerConfig(
+                    totalSeconds = newTotal,
+                    targetEndEpochMs = targetEndEpochMs,
+                    mode = current.selectedMode,
+                    fadeAudio = current.fadeAudio,
+                    playWarning = current.playWarningSound,
+                    shakeToExtend = current.shakeToExtend
+                )
+            )
+
             _timerFlow.value = current.copy(
                 totalSeconds = newTotal,
                 remainingSeconds = newRemaining
             )
-            acquireTimedWakeLock(newRemaining)
+            renewCountdownWakeLock()
             NativeMediaIslandBridge.startOrUpdate(applicationContext, newRemaining, newTotal, current.selectedMode)
-            scheduleExactAlarm(newRemaining, current.selectedMode, current.fadeAudio)
+            scheduleExactAlarm(targetEndEpochMs, current.selectedMode, current.fadeAudio)
             updateNotification(newRemaining, current.selectedMode)
             SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
             ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
@@ -251,12 +402,27 @@ class TimerForegroundService : Service() {
         }
     }
 
-    private fun acquireTimedWakeLock(seconds: Long) {
+    private fun renewCountdownWakeLock() {
+        runCatching {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (pm?.isInteractive != false) {
+                wakeLock?.acquire(120_000L)
+            }
+        }
+    }
+
+    private fun releaseWakeLockSafely() {
         runCatching {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-            wakeLock?.acquire((seconds + 60L) * 1000L)
+        }
+    }
+
+    private fun ensureForegroundReady(remainingSeconds: Long, mode: ShutdownMode) {
+        if (!foregroundStarted) {
+            startForeground(NOTIFICATION_ID, buildNotification(remainingSeconds, mode))
+            foregroundStarted = true
         }
     }
 
@@ -265,17 +431,33 @@ class TimerForegroundService : Service() {
         mode: ShutdownMode,
         fadeAudio: Boolean,
         playWarning: Boolean,
-        shakeToExtend: Boolean
+        shakeToExtend: Boolean,
+        persistedTotalSeconds: Long = seconds,
+        targetEpochOverride: Long? = null
     ) {
         timerJob?.cancel()
+        enforcementJob?.cancel()
+        enforcementStarted.set(false)
+        persistence.clearShutdownEnforcing()
         shakeDetector?.stop()
 
-        targetEndEpochMs = System.currentTimeMillis() + seconds * 1000L
-        acquireTimedWakeLock(seconds)
+        val now = System.currentTimeMillis()
+        targetEndEpochMs = targetEpochOverride ?: (now + seconds * 1000L)
+        persistence.saveActiveTimer(
+            PersistedTimerConfig(
+                totalSeconds = persistedTotalSeconds,
+                targetEndEpochMs = targetEndEpochMs,
+                mode = mode,
+                fadeAudio = fadeAudio,
+                playWarning = playWarning,
+                shakeToExtend = shakeToExtend
+            )
+        )
+        renewCountdownWakeLock()
 
         _timerFlow.value = TimerState(
             isRunning = true,
-            totalSeconds = seconds,
+            totalSeconds = persistedTotalSeconds,
             remainingSeconds = seconds,
             selectedMode = mode,
             fadeAudio = fadeAudio,
@@ -283,9 +465,10 @@ class TimerForegroundService : Service() {
             shakeToExtend = shakeToExtend
         )
 
-        NativeMediaIslandBridge.startOrUpdate(applicationContext, seconds, seconds, mode)
+        NativeMediaIslandBridge.startOrUpdate(applicationContext, seconds, persistedTotalSeconds, mode)
         startForeground(NOTIFICATION_ID, buildNotification(seconds, mode))
-        scheduleExactAlarm(seconds, mode, fadeAudio)
+        foregroundStarted = true
+        scheduleExactAlarm(targetEndEpochMs, mode, fadeAudio)
         SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
         ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
 
@@ -299,24 +482,27 @@ class TimerForegroundService : Service() {
         timerJob = serviceScope.launch {
             var warnedAt30s = false
             var lastNotifSec = seconds
+            var loopTicks = 0L
 
             while (isActive) {
                 delay(1000L)
-                val now = System.currentTimeMillis()
-                // Luôn tính số giây còn lại dựa trên mốc thời gian thực (System.currentTimeMillis),
-                // khắc phục triệt để lỗi đồng hồ bị đứng ở 50 phút khi CPU vào chế độ ngủ sâu (Deep Sleep/Doze) ban đêm!
-                val remaining = ((targetEndEpochMs - now + 999L) / 1000L).coerceAtLeast(0L)
+                loopTicks++
+                val tickNow = System.currentTimeMillis()
+                val remaining = TimerPersistenceManager.computeRemainingSeconds(tickNow, targetEndEpochMs)
                 _timerFlow.value = _timerFlow.value.copy(remainingSeconds = remaining)
 
                 if (remaining <= 0L) {
                     break
                 }
 
-                // Chỉ cập nhật Dynamic Island khi màn hình đang bật để tiết kiệm pin và không giữ tài nguyên ngầm
                 val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
-                if (pm?.isInteractive != false) {
-                    // Gọi NativeMediaIslandBridge mỗi 1 giây để viên thuốc con nhộng giảm từng 1s liên tục đến 00:00
-                    // (KHÔNG gọi thêm SystemDynamicIslandManager.refreshOverlay ở đây để tránh double-call MediaSession)
+                val isInteractive = pm?.isInteractive != false
+
+                if (isInteractive && loopTicks % 60L == 0L) {
+                    renewCountdownWakeLock()
+                }
+
+                if (isInteractive) {
                     NativeMediaIslandBridge.startOrUpdate(
                         applicationContext,
                         remaining,
@@ -325,22 +511,28 @@ class TimerForegroundService : Service() {
                     )
                 }
 
-                // Cảnh báo rung trước 30 giây (chỉ khi màn hình đang sáng)
-                if (remaining <= 30L && !warnedAt30s && playWarning && pm?.isInteractive != false) {
+                if (remaining <= 30L && !warnedAt30s && playWarning && isInteractive) {
                     warnedAt30s = true
                     vibrateWarning()
                 }
 
-                // Chỉ cập nhật Notification mỗi 5 giây (hoặc 10 giây cuối) để KHÔNG chạm ngưỡng chặn 20 thông báo/20s của Android 14/15!
-                if (remaining != lastNotifSec && (remaining % 5L == 0L || remaining <= 10L) && pm?.isInteractive != false) {
+                if (TimerPersistenceManager.shouldUpdateNotification(remaining, lastNotifSec, isInteractive)) {
                     lastNotifSec = remaining
                     updateNotification(remaining, mode)
                     ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
                 }
             }
 
-            if (isActive) {
-                onCountdownFinished(mode, fadeAudio)
+            if (isActive && !enforcementStarted.get()) {
+                // Chờ tối đa 1.2s để AlarmManager.setAlarmClock (quyền BAL Activity của system_server) kích hoạt trước
+                var waitedMs = 0L
+                while (waitedMs < 1_200L && !enforcementStarted.get() && isActive) {
+                    delay(100L)
+                    waitedMs += 100L
+                }
+                if (isActive && !enforcementStarted.get()) {
+                    launchShutdownEnforcement(mode, fadeAudio)
+                }
             }
         }
     }
@@ -348,46 +540,128 @@ class TimerForegroundService : Service() {
     private fun stopCountdown() {
         targetEndEpochMs = 0L
         timerJob?.cancel()
+        enforcementJob?.cancel()
+        enforcementStarted.set(false)
         shakeDetector?.stop()
         cancelExactAlarm()
         NativeMediaIslandBridge.stop()
-        if (wakeLock?.isHeld == true) {
-            runCatching { wakeLock?.release() }
-        }
+        persistence.clearActiveTimer()
+        persistence.clearShutdownEnforcing()
+        releaseWakeLockSafely()
         _timerFlow.value = TimerState()
         SystemDynamicIslandManager.refreshOverlay(applicationContext, _timerFlow.value)
         ToolsHubAppWidgetProvider.updateAllWidgets(applicationContext)
+        foregroundStarted = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private suspend fun onCountdownFinished(mode: ShutdownMode, fadeAudio: Boolean) {
-        Log.i("TimerService", "Countdown finished. Executing shutdown BEFORE stopping service...")
+    private fun launchShutdownEnforcement(mode: ShutdownMode, fadeAudio: Boolean) {
+        if (!enforcementStarted.compareAndSet(false, true)) {
+            Log.i(TAG, "Shutdown enforcement already running, ignoring duplicate trigger.")
+            return
+        }
+
+        timerJob?.cancel()
+        shakeDetector?.stop()
         cancelExactAlarm()
         NativeMediaIslandBridge.stop()
-        shutdownManager.executeShutdown(mode, fadeAudio)
-        stopCountdown()
+        persistence.clearActiveTimer()
+        persistence.markShutdownEnforcing(
+            System.currentTimeMillis() + ShutdownEnforcementPolicy.FULL_LOCK_MAX_FOCUS_HOLD_MS
+        )
+
+        enforcementJob = serviceScope.launch {
+            runCatching {
+                wakeLock?.acquire(45_000L)
+            }
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val initialInteractive = pm?.isInteractive ?: true
+
+            when (ShutdownEnforcementPolicy.decideInitialAction(initialInteractive, mode)) {
+                com.vunameaut.powertimer.manager.InitialEnforcementAction.PAUSE_MEDIA_SILENT_STOP_WHEN_SCREEN_ALREADY_OFF -> {
+                    shutdownManager.executeShutdownWithResult(mode, fadeAudio, holdFocusUntilScreenOff = false)
+                    shutdownManager.restoreTimeoutIfModified()
+                    shutdownManager.releaseHeldAudioFocus()
+                    stopCountdown()
+                    return@launch
+                }
+                com.vunameaut.powertimer.manager.InitialEnforcementAction.EXECUTE_SHUTDOWN_AND_HOLD_FOCUS -> {
+                    val result = shutdownManager.executeShutdownWithResult(
+                        mode = mode,
+                        fadeAudio = fadeAudio,
+                        holdFocusUntilScreenOff = (mode != ShutdownMode.MEDIA_ONLY)
+                    )
+                    var appliedTimeoutMs = result.appliedTimeoutMs
+                    var oledGuardLaunched = result.engagedOledGuard
+
+                    var elapsedMs = 0L
+                    while (isActive) {
+                        delay(1_000L)
+                        elapsedMs += 1_000L
+
+                        if (appliedTimeoutMs <= 0 && mode == ShutdownMode.BANK_SAFE_SLEEP) {
+                            appliedTimeoutMs = runCatching {
+                                Settings.System.getInt(
+                                    contentResolver,
+                                    Settings.System.SCREEN_OFF_TIMEOUT,
+                                    15_000
+                                )
+                            }.getOrDefault(15_000)
+                        }
+
+                        val currentlyInteractive = pm?.isInteractive ?: false
+                        when (
+                            ShutdownEnforcementPolicy.evaluatePollStep(
+                                elapsedSinceStartMs = elapsedMs,
+                                isScreenInteractive = currentlyInteractive,
+                                mode = mode,
+                                appliedTimeoutMs = appliedTimeoutMs,
+                                oledGuardLaunched = oledGuardLaunched
+                            )
+                        ) {
+                            PollDecision.RESTORE_AND_STOP_ON_SCREEN_OFF -> {
+                                shutdownManager.restoreTimeoutIfModified()
+                                delay(1_000L)
+                                shutdownManager.releaseHeldAudioFocus()
+                                stopCountdown()
+                                return@launch
+                            }
+                            PollDecision.COMPLETE_MEDIA_ONLY -> {
+                                stopCountdown()
+                                return@launch
+                            }
+                            PollDecision.ENGAGE_OLED_BATTERY_GUARD -> {
+                                oledGuardLaunched = true
+                                BlackoutSleepActivity.launchOledBatteryGuard(applicationContext)
+                                delay(1_500L)
+                                releaseWakeLockSafely()
+                            }
+                            PollDecision.REASSERT_MEDIA_AND_TIMEOUT -> {
+                                shutdownManager.reassertMediaAndTimeout(mode)
+                            }
+                            PollDecision.HARD_TIMEOUT_RELEASE -> {
+                                if (!oledGuardLaunched && mode != ShutdownMode.MEDIA_ONLY) {
+                                    BlackoutSleepActivity.launchOledBatteryGuard(applicationContext)
+                                }
+                                shutdownManager.releaseHeldAudioFocus()
+                                stopCountdown()
+                                return@launch
+                            }
+                            PollDecision.CONTINUE_WAITING -> Unit
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun scheduleExactAlarm(
-        seconds: Long,
+        triggerAtMillis: Long,
         mode: ShutdownMode,
         fadeAudio: Boolean = true
     ) {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val triggerAtMillis = System.currentTimeMillis() + (seconds * 1000L)
-
-        val intent = Intent(this, TimerAlarmReceiver::class.java).apply {
-            action = TimerAlarmReceiver.ACTION_TIMER_EXPIRED
-            putExtra(TimerAlarmReceiver.EXTRA_SHUTDOWN_MODE, mode.name)
-            putExtra(TimerAlarmReceiver.EXTRA_FADE_AUDIO, fadeAudio)
-        }
-        val pendingIntent = PendingIntent.getBroadcast(
-            this,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
 
         val showAppIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -400,37 +674,69 @@ class TimerForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Chính: setAlarmClock trỏ tới BlackoutSleepActivity -> system_server cấp miễn trừ BAL Activity sau 30p–120p!
+        val alarmClockActivityPi = BlackoutSleepActivity.createAlarmClockPendingIntent(
+            context = this,
+            mode = mode,
+            fadeAudio = fadeAudio
+        )
         try {
-            // Dùng setAlarmClock để được Android cấp quyền miễn trừ Background Activity Launch (bật được BlackoutSleepActivity đè lên Facebook/TikTok)
             alarmManager.setAlarmClock(
                 AlarmManager.AlarmClockInfo(triggerAtMillis, showAppPi),
-                pendingIntent
+                alarmClockActivityPi
             )
         } catch (_: Throwable) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, alarmClockActivityPi)
                 } else {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, alarmClockActivityPi)
                 }
-            } catch (_: SecurityException) {
-                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+            } catch (_: Throwable) {
             }
+        }
+
+        // Dự phòng cấp 2 (+2s): BroadcastReceiver chuyển thẳng về Foreground Service nếu Activity alarm bị trễ
+        val backupReceiverPi = buildBackupReceiverPendingIntent(mode, fadeAudio)
+        val backupAtMillis = triggerAtMillis + 2_000L
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, backupAtMillis, backupReceiverPi)
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, backupAtMillis, backupReceiverPi)
+            }
+        } catch (_: SecurityException) {
+            alarmManager.set(AlarmManager.RTC_WAKEUP, backupAtMillis, backupReceiverPi)
         }
     }
 
-    private fun cancelExactAlarm() {
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    private fun buildBackupReceiverPendingIntent(mode: ShutdownMode, fadeAudio: Boolean): PendingIntent {
         val intent = Intent(this, TimerAlarmReceiver::class.java).apply {
             action = TimerAlarmReceiver.ACTION_TIMER_EXPIRED
+            putExtra(TimerAlarmReceiver.EXTRA_SHUTDOWN_MODE, mode.name)
+            putExtra(TimerAlarmReceiver.EXTRA_FADE_AUDIO, fadeAudio)
         }
-        val pendingIntent = PendingIntent.getBroadcast(
+        return PendingIntent.getBroadcast(
             this,
             0,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        alarmManager.cancel(pendingIntent)
+    }
+
+    private fun cancelExactAlarm() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val activityPi = BlackoutSleepActivity.createAlarmClockPendingIntent(
+            context = this,
+            mode = _timerFlow.value.selectedMode,
+            fadeAudio = _timerFlow.value.fadeAudio
+        )
+        val receiverPi = buildBackupReceiverPendingIntent(
+            _timerFlow.value.selectedMode,
+            _timerFlow.value.fadeAudio
+        )
+        runCatching { alarmManager.cancel(activityPi) }
+        runCatching { alarmManager.cancel(receiverPi) }
     }
 
     private fun vibrateWarning() {
@@ -579,7 +885,7 @@ class TimerForegroundService : Service() {
         val progress = ((remainingSeconds * 100) / totalSeconds).toInt().coerceIn(0, 100)
         val views = RemoteViews(packageName, R.layout.notification_timer).apply {
             setTextViewText(R.id.notif_title, "Hẹn giờ tắt màn hình")
-            setTextViewText(R.id.notif_subtitle, "${mode.badge}  •  Lắc máy để +10 phút")
+            setTextViewText(R.id.notif_subtitle, "${mode.badge}  •  Chạm để mở")
             setChronometerCountDown(R.id.notif_chrono, true)
             setChronometer(
                 R.id.notif_chrono,

@@ -38,7 +38,8 @@ class TimerViewModel(application: Application) : AndroidViewModel(application) {
     private val _playWarningSound = MutableStateFlow(true)
     val playWarningSound: StateFlow<Boolean> = _playWarningSound.asStateFlow()
 
-    private val _shakeToExtend = MutableStateFlow(true)
+    // Mặc định TẮT để tránh cựa mình / đặt máy xuống đệm khi ngủ vô tình cộng thêm 10 phút cả đêm
+    private val _shakeToExtend = MutableStateFlow(false)
     val shakeToExtend: StateFlow<Boolean> = _shakeToExtend.asStateFlow()
 
     private val _permissions = MutableStateFlow(PermissionStatusState())

@@ -58,9 +58,9 @@ object NativeMediaIslandBridge {
 
         val isNewSession = (mediaSession == null)
         val session = ensureMediaSession(appCtx)
-        // Phát xung âm thanh tĩnh cực ngắn mỗi 4 giây khi đang đếm ngược
-        // để Vivo OriginOS / HyperOS không đóng băng tiến trình sau 15-19s (ở giây 00:41)!
-        if (isNewSession || remainingSeconds % 4L == 0L) {
+        // Phát xung micro-PCM siêu nhỏ mỗi 8 giây khi màn hình đang sáng
+        // để giữ ForegroundService loại mediaPlayback luôn tỉnh suốt 30p–120p trên Vivo OriginOS / HyperOS!
+        if (isNewSession || remainingSeconds % 8L == 0L) {
             pulseSilentMediaInitOnce()
         }
 
@@ -203,8 +203,8 @@ object NativeMediaIslandBridge {
     }
 
     /**
-     * Phát 1 xung âm thanh tĩnh cực ngắn (140ms) rồi GIẢI PHÓNG NGAY,
-     * tuyệt đối không chiếm thanh Âm lượng hay chặn chuông cuộc gọi / báo thức.
+     * Phát 1 xung âm thanh micro-PCM siêu nhỏ (90ms, mẫu 1/32767, âm lượng 0.5%) rồi GIẢI PHÓNG NGAY,
+     * đủ để AudioFlinger Vivo OriginOS / HyperOS giữ foreground mediaPlayback suốt 30p–120p mà tai người không nghe thấy.
      */
     private fun pulseSilentMediaInitOnce() {
         CoroutineScope(Dispatchers.Default).launch {
@@ -213,8 +213,8 @@ object NativeMediaIslandBridge {
                 silentAudioTrack = null
 
                 val sampleRate = 8000
-                val sampleCount = (sampleRate * 14) / 100 // 140ms
-                val samples = ShortArray(sampleCount) { 0 }
+                val sampleCount = (sampleRate * 9) / 100 // 90ms
+                val samples = ShortArray(sampleCount) { 1 }
                 val byteSize = sampleCount * 2
 
                 val track = AudioTrack.Builder()
@@ -236,9 +236,9 @@ object NativeMediaIslandBridge {
                     .build()
 
                 track.write(samples, 0, sampleCount)
-                track.setVolume(0.0f)
+                track.setVolume(0.005f)
                 track.play()
-                kotlinx.coroutines.delay(150L)
+                kotlinx.coroutines.delay(100L)
                 track.stop()
                 track.release()
             }

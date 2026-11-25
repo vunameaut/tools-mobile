@@ -6,7 +6,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -16,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
@@ -26,29 +29,60 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.vunameaut.powertimer.R
+import com.vunameaut.powertimer.data.model.ShutdownMode
+import com.vunameaut.powertimer.manager.ScreenTimeoutStateMachine
+import com.vunameaut.powertimer.receiver.DeviceAdminSampleReceiver
+import com.vunameaut.powertimer.service.PowerAccessibilityService
+import com.vunameaut.powertimer.service.TimerForegroundService
 
 /**
- * Điều phối thoát về Màn hình chính & Tắt màn hình an toàn Chuẩn Ngân Hàng:
- * - TUYỆT ĐỐI KHÔNG giữ lớp phủ đen toàn màn hình đè lên app đang chạy (không gây kẹt cảm ứng hay video chạy ngầm).
- * - Đưa máy về Màn hình chính (CATEGORY_HOME) để TikTok / Douyin / Facebook tự dừng video và nhả FLAG_KEEP_SCREEN_ON.
- * - Khi mở Activity tắt màn hình (trường hợp fallback chưa bật Device Admin), chỉ cần chạm 1 lần bất kỳ đâu là thoát ngay.
+ * Điều phối thoát về Màn hình chính, thực thi AlarmClock exemption sau 30p–120p chạy nền,
+ * và Màn đen OLED 0% tiết kiệm pin tuyệt đối nếu app khác cố giữ sáng màn hình:
+ * - TUYỆT ĐỐI KHÔNG gây kẹt cảm ứng: chạm 1 lần vào bất kỳ đâu là hủy và thoát ngay.
+ * - Tận dụng `AlarmManager.setAlarmClock` trỏ tới Activity để được miễn trừ BAL Android 14/15
+ *   sau 30 phút không chạm vào app.
  */
 class BlackoutSleepActivity : Activity() {
 
     companion object {
         private const val TAG = "BlackoutSleepActivity"
-        private const val PREFS_NAME = "bank_safe_sleep_prefs"
-        private const val KEY_SAVED_TIMEOUT = "saved_screen_off_timeout"
-        private const val MIN_TIMEOUT_MS = 1000
         private const val FULLSCREEN_CHANNEL_ID = "blackout_sleep_channel"
         private const val FULLSCREEN_NOTIF_ID = 1099
         private const val EXTRA_GO_HOME_AND_FINISH = "extra_go_home_and_finish"
+        const val EXTRA_FROM_ALARM_CLOCK = "extra_from_alarm_clock"
+        const val EXTRA_SHUTDOWN_MODE = "extra_shutdown_mode"
+        const val EXTRA_FADE_AUDIO = "extra_fade_audio"
+        const val EXTRA_OLED_BATTERY_GUARD = "extra_oled_battery_guard"
+
+        fun createAlarmClockPendingIntent(
+            context: Context,
+            mode: ShutdownMode,
+            fadeAudio: Boolean
+        ): PendingIntent {
+            val appCtx = context.applicationContext
+            val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
+                putExtra(EXTRA_FROM_ALARM_CLOCK, true)
+                putExtra(EXTRA_SHUTDOWN_MODE, mode.name)
+                putExtra(EXTRA_FADE_AUDIO, fadeAudio)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+            }
+            return PendingIntent.getActivity(
+                appCtx,
+                1095,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
 
         /**
          * Đưa thiết bị về Màn hình chính (Home) từ dưới nền mà KHÔNG cần Trợ năng (Accessibility):
-         * Dùng một cửa sổ neo 1x1 pixel trong suốt trong 350ms (nếu đã có quyền Overlay) để Android
-         * BackgroundActivityStartController xác thực cửa sổ hiển thị hợp lệ, rồi mở CATEGORY_HOME.
-         * -> Ép TikTok / Douyin / Facebook rơi ngay vào onPause()/onStop(), dừng phát video 100%!
+         * Dùng cửa sổ neo 2x2 px alpha siêu nhỏ chờ 65ms để WindowManagerService ghi nhận
+         * hasVisibleWindow() == true, rồi mở cầu nối về CATEGORY_HOME.
          */
         fun launchHomeScreenFromBackground(context: Context) {
             val appCtx = context.applicationContext
@@ -56,16 +90,7 @@ class BlackoutSleepActivity : Activity() {
                 addCategory(Intent.CATEGORY_HOME)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
             }
-            val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
-                runCatching {
-                    ActivityOptions.makeBasic()
-                        .setPendingIntentBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                        )
-                        .toBundle()
-                }.getOrNull()
-            } else null
-
+            val optionsBundle = buildAllowBalBundle()
             val homePi = PendingIntent.getActivity(
                 appCtx,
                 1097,
@@ -74,9 +99,10 @@ class BlackoutSleepActivity : Activity() {
             )
 
             if (Settings.canDrawOverlays(appCtx)) {
-                Handler(Looper.getMainLooper()).post {
+                val mainHandler = Handler(Looper.getMainLooper())
+                mainHandler.post {
                     val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-                    val anchorView = View(appCtx).apply { setBackgroundColor(Color.TRANSPARENT) }
+                    val anchorView = View(appCtx).apply { setBackgroundColor(Color.argb(3, 0, 0, 0)) }
                     val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                     } else {
@@ -84,8 +110,8 @@ class BlackoutSleepActivity : Activity() {
                         WindowManager.LayoutParams.TYPE_PHONE
                     }
                     val params = WindowManager.LayoutParams(
-                        1,
-                        1,
+                        2,
+                        2,
                         type,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                         PixelFormat.TRANSLUCENT
@@ -94,14 +120,60 @@ class BlackoutSleepActivity : Activity() {
                     }
                     runCatching { wm?.addView(anchorView, params) }
 
-                    dispatchStartHome(appCtx, homeIntent, homePi, optionsBundle)
+                    // Chờ 65ms cho WindowManagerService gắn frame đầu tiên trước khi gọi startActivity
+                    mainHandler.postDelayed({
+                        launchBridgeActivityDirect(appCtx, optionsBundle)
+                        dispatchStartHome(appCtx, homeIntent, homePi, optionsBundle)
+                    }, 65L)
 
-                    Handler(Looper.getMainLooper()).postDelayed({
+                    mainHandler.postDelayed({
                         runCatching { wm?.removeView(anchorView) }
-                    }, 350L)
+                    }, 650L)
                 }
             } else {
+                launchBridgeActivityDirect(appCtx, optionsBundle)
                 dispatchStartHome(appCtx, homeIntent, homePi, optionsBundle)
+            }
+        }
+
+        private fun buildAllowBalBundle(): Bundle? {
+            return if (Build.VERSION.SDK_INT >= 34) {
+                runCatching {
+                    ActivityOptions.makeBasic()
+                        .setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                        )
+                        .toBundle()
+                }.getOrNull()
+            } else null
+        }
+
+        private fun launchBridgeActivityDirect(appCtx: Context, optionsBundle: Bundle?) {
+            val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
+                putExtra(EXTRA_GO_HOME_AND_FINISH, true)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+            }
+            val pi = PendingIntent.getActivity(
+                appCtx,
+                1096,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
+                    pi.send(appCtx, 0, intent, null, null, null, optionsBundle)
+                } else {
+                    pi.send()
+                }
+            }
+            runCatching {
+                if (optionsBundle != null) appCtx.startActivity(intent, optionsBundle)
+                else appCtx.startActivity(intent)
             }
         }
 
@@ -127,50 +199,17 @@ class BlackoutSleepActivity : Activity() {
             }
         }
 
-        @Volatile
-        private var appLevelScreenOffReceiver: BroadcastReceiver? = null
-
         /**
-         * Tắt màn hình tự nhiên Chuẩn Ngân Hàng KHÔNG mở bất kỳ màn hình đen giả nào:
-         * 1. Thoát TikTok/Facebook/YouTube ra Màn hình chính thật (dừng video & nhả cờ giữ sáng).
-         * 2. Hạ thời gian chờ tắt màn hình (SCREEN_OFF_TIMEOUT) xuống mức tối thiểu ngay ngoài Màn hình chính
-         *    -> Máy tự tắt & khóa Lock Screen phần cứng sau vài giây, giữ nguyên Vân tay / Khuôn mặt!
-         * 3. Lắng nghe ACTION_SCREEN_OFF cấp Application để tự trả lại timeout ban đầu ngay khi màn hình tắt.
+         * Tắt màn hình tự nhiên Chuẩn Ngân Hàng (khi Service/Enforcer đã quản lý vòng đời khôi phục):
+         * 1. Thoát app video ra Màn hình chính thật (CATEGORY_HOME + bridge).
+         * 2. Hạ thời gian chờ tắt màn hình xuống mức tối thiểu ngay ngoài Home -> máy tự khóa & giữ nguyên Vân tay.
          */
-        fun triggerNaturalHomeScreenLock(context: Context) {
+        fun triggerNaturalHomeScreenLock(context: Context): Int {
             val appCtx = context.applicationContext
             launchHomeScreenFromBackground(appCtx)
-            // Mở kèm BlackoutSleepActivity ở chế độ cầu nối 100ms để chắc chắn vượt qua màn hình TikTok đang ở Foreground,
-            // đẩy TikTok xuống nền rồi tự động chuyển về Màn hình chính Home và đóng ngay lập tức!
-            launchBridgeToHome(appCtx)
 
+            val appliedNow = applyMinimumScreenTimeout(appCtx)
             val mainHandler = Handler(Looper.getMainLooper())
-            appLevelScreenOffReceiver?.let { existing ->
-                runCatching { appCtx.unregisterReceiver(existing) }
-                appLevelScreenOffReceiver = null
-            }
-
-            val receiver = object : BroadcastReceiver() {
-                override fun onReceive(c: Context?, intent: Intent?) {
-                    if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                        restoreOriginalScreenTimeout(appCtx)
-                        runCatching { appCtx.unregisterReceiver(this) }
-                        if (appLevelScreenOffReceiver === this) {
-                            appLevelScreenOffReceiver = null
-                        }
-                    }
-                }
-            }
-            appLevelScreenOffReceiver = receiver
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    appCtx.registerReceiver(receiver, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED)
-                } else {
-                    appCtx.registerReceiver(receiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
-                }
-            }
-
-            // Áp dụng timeout thấp nhất sau khi đã về Home (500ms) để hệ thống không reset lại idle timer
             mainHandler.postDelayed({
                 val appliedMs = applyMinimumScreenTimeout(appCtx)
                 val waitSec = ((appliedMs + 999) / 1000).coerceAtLeast(1)
@@ -178,25 +217,23 @@ class BlackoutSleepActivity : Activity() {
                     android.widget.Toast.makeText(
                         appCtx,
                         "⏳ Đã thoát về Màn hình chính! Máy sẽ tự tắt sau ${waitSec}s (Giữ Vân tay)",
-                        android.widget.Toast.LENGTH_LONG
+                        android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
-                val safetyRestoreMs = (appliedMs.toLong() + 25_000L).coerceAtLeast(45_000L)
-                mainHandler.postDelayed({
-                    restoreOriginalScreenTimeout(appCtx)
-                    appLevelScreenOffReceiver?.let { r ->
-                        runCatching { appCtx.unregisterReceiver(r) }
-                        if (appLevelScreenOffReceiver === r) {
-                            appLevelScreenOffReceiver = null
-                        }
-                    }
-                }, safetyRestoreMs)
-            }, 500L)
+            }, 450L)
+            return appliedNow
         }
 
-        private fun launchBridgeToHome(appCtx: Context) {
+        /**
+         * Lớp bảo vệ pin tuyệt đối OLED 0% (chỉ bật khi ứng dụng khác giữ sáng màn hình quá hạn
+         * hoặc chưa cấp WRITE_SETTINGS): che toàn bộ bằng màu đen #000000 ở độ sáng 0%, xóa FLAG_KEEP_SCREEN_ON
+         * để máy tự tắt phần cứng hoặc tiêu thụ điện gần bằng 0 thay vì sáng trắng cả đêm.
+         */
+        fun launchOledBatteryGuard(context: Context) {
+            val appCtx = context.applicationContext
+            applyMinimumScreenTimeout(appCtx)
             val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
-                putExtra(EXTRA_GO_HOME_AND_FINISH, true)
+                putExtra(EXTRA_OLED_BATTERY_GUARD, true)
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_NO_ANIMATION or
@@ -204,18 +241,10 @@ class BlackoutSleepActivity : Activity() {
                         Intent.FLAG_ACTIVITY_CLEAR_TOP
                 )
             }
-            val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
-                runCatching {
-                    ActivityOptions.makeBasic()
-                        .setPendingIntentBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                        )
-                        .toBundle()
-                }.getOrNull()
-            } else null
+            val optionsBundle = buildAllowBalBundle()
             val pi = PendingIntent.getActivity(
                 appCtx,
-                1096,
+                1098,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
@@ -229,58 +258,14 @@ class BlackoutSleepActivity : Activity() {
             runCatching {
                 if (optionsBundle != null) appCtx.startActivity(intent, optionsBundle)
                 else appCtx.startActivity(intent)
+            }.onFailure {
+                Log.w(TAG, "Direct OLED Guard startActivity failed: ${it.message}")
             }
             postFullScreenBlackoutFallback(appCtx, pi)
         }
 
         fun launch(context: Context) {
-            val appCtx = context.applicationContext
-            applyMinimumScreenTimeout(appCtx)
-
-            val intent = Intent(appCtx, BlackoutSleepActivity::class.java).apply {
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
-                )
-            }
-
-            val optionsBundle = if (Build.VERSION.SDK_INT >= 34) {
-                runCatching {
-                    ActivityOptions.makeBasic()
-                        .setPendingIntentBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                        )
-                        .toBundle()
-                }.getOrNull()
-            } else null
-
-            val pi = PendingIntent.getActivity(
-                appCtx,
-                1098,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            runCatching {
-                if (Build.VERSION.SDK_INT >= 34 && optionsBundle != null) {
-                    pi.send(appCtx, 0, intent, null, null, null, optionsBundle)
-                } else {
-                    pi.send()
-                }
-            }
-            runCatching {
-                if (optionsBundle != null) {
-                    appCtx.startActivity(intent, optionsBundle)
-                } else {
-                    appCtx.startActivity(intent)
-                }
-            }.onFailure {
-                Log.w(TAG, "Direct startActivity failed: ${it.message}")
-            }
-
-            postFullScreenBlackoutFallback(appCtx, pi)
+            launchOledBatteryGuard(context)
         }
 
         private fun postFullScreenBlackoutFallback(appCtx: Context, fullScreenPi: PendingIntent) {
@@ -304,8 +289,8 @@ class BlackoutSleepActivity : Activity() {
                     Notification.Builder(appCtx)
                 }
                 builder.setSmallIcon(R.drawable.ic_stat_timer)
-                    .setContentTitle("Đang tắt màn hình...")
-                    .setContentText("Chạm 1 lần để hủy hoặc chờ vài giây máy tự khóa")
+                    .setContentTitle("Đang tắt màn hình & bảo vệ pin...")
+                    .setContentText("Chạm để mở nếu muốn hủy tắt màn hình")
                     .setFullScreenIntent(fullScreenPi, true)
                     .setAutoCancel(true)
                     .setCategory(Notification.CATEGORY_ALARM)
@@ -320,34 +305,25 @@ class BlackoutSleepActivity : Activity() {
         fun applyMinimumScreenTimeout(context: Context): Int {
             if (!Settings.System.canWrite(context)) return -1
             return try {
-                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val currentTimeout = Settings.System.getInt(
                     context.contentResolver,
                     Settings.System.SCREEN_OFF_TIMEOUT,
                     60_000
                 )
-                if (currentTimeout > 12_000 && !prefs.contains(KEY_SAVED_TIMEOUT)) {
-                    prefs.edit().putInt(KEY_SAVED_TIMEOUT, currentTimeout).apply()
-                }
-                // Thử lần lượt từ 1s -> 5s -> 10s -> 15s -> 30s vì Vivo OriginOS từ chối số quá nhỏ (< 15s)
-                val candidates = intArrayOf(MIN_TIMEOUT_MS, 5_000, 10_000, 15_000, 30_000)
-                for (candidate in candidates) {
+                val actual = ScreenTimeoutStateMachine.from(context).applyMinimumTimeout(currentTimeout) { candidate ->
                     Settings.System.putInt(
                         context.contentResolver,
                         Settings.System.SCREEN_OFF_TIMEOUT,
                         candidate
                     )
-                    val actual = Settings.System.getInt(
+                    Settings.System.getInt(
                         context.contentResolver,
                         Settings.System.SCREEN_OFF_TIMEOUT,
                         currentTimeout
                     )
-                    if (actual <= candidate + 1000) {
-                        Log.i(TAG, "Applied SCREEN_OFF_TIMEOUT = ${actual}ms (candidate $candidate)")
-                        return actual
-                    }
                 }
-                Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 30_000)
+                Log.i(TAG, "Applied SCREEN_OFF_TIMEOUT = ${actual}ms")
+                actual
             } catch (e: Throwable) {
                 Log.w(TAG, "Failed to lower SCREEN_OFF_TIMEOUT: ${e.message}")
                 -1
@@ -357,29 +333,20 @@ class BlackoutSleepActivity : Activity() {
         fun restoreOriginalScreenTimeout(context: Context) {
             if (!Settings.System.canWrite(context)) return
             try {
-                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val saved = prefs.getInt(KEY_SAVED_TIMEOUT, -1)
-                if (saved > 0) {
+                val current = Settings.System.getInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_OFF_TIMEOUT,
+                    60_000
+                )
+                val restored = ScreenTimeoutStateMachine.from(context).restoreIfModified(current) { target ->
                     Settings.System.putInt(
                         context.contentResolver,
                         Settings.System.SCREEN_OFF_TIMEOUT,
-                        saved
+                        target
                     )
-                    prefs.edit().remove(KEY_SAVED_TIMEOUT).apply()
-                    Log.i(TAG, "Restored original SCREEN_OFF_TIMEOUT to ${saved}ms")
-                } else {
-                    val current = Settings.System.getInt(
-                        context.contentResolver,
-                        Settings.System.SCREEN_OFF_TIMEOUT,
-                        60_000
-                    )
-                    if (current <= 10_000) {
-                        Settings.System.putInt(
-                            context.contentResolver,
-                            Settings.System.SCREEN_OFF_TIMEOUT,
-                            60_000
-                        )
-                    }
+                }
+                if (restored != null) {
+                    Log.i(TAG, "Restored original SCREEN_OFF_TIMEOUT to ${restored}ms")
                 }
             } catch (e: Throwable) {
                 Log.w(TAG, "Failed to restore SCREEN_OFF_TIMEOUT: ${e.message}")
@@ -387,7 +354,6 @@ class BlackoutSleepActivity : Activity() {
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
     private var receiverRegistered = false
 
     private val screenOffReceiver = object : BroadcastReceiver() {
@@ -411,8 +377,11 @@ class BlackoutSleepActivity : Activity() {
             nm.cancel(FULLSCREEN_NOTIF_ID)
         }
 
+        if (handleAlarmClockLaunchIfNeeded(intent)) {
+            return
+        }
+
         if (intent?.getBooleanExtra(EXTRA_GO_HOME_AND_FINISH, false) == true) {
-            // Đã chiếm quyền Foreground khỏi TikTok -> Đẩy về Màn hình chính Home thật rồi đóng ngay!
             val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
@@ -422,9 +391,95 @@ class BlackoutSleepActivity : Activity() {
             return
         }
 
+        renderOledBatteryGuardUi()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent == null) return
+        if (handleAlarmClockLaunchIfNeeded(intent)) {
+            return
+        }
+        if (intent.getBooleanExtra(EXTRA_GO_HOME_AND_FINISH, false)) {
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            runCatching { startActivity(homeIntent) }
+            finishAndRemoveTask()
+        }
+    }
+
+    /**
+     * Xử lý luồng thức dậy trực tiếp từ `AlarmManager.setAlarmClock` sau 30p–120p:
+     * Vì Activity này được `system_server` bật với đặc quyền `BAL_ALLOW_ALARM_CLOCK`,
+     * nó có toàn quyền Foreground để đẩy TikTok/YouTube/Facebook về Màn hình chính Home ngay lập tức!
+     */
+    private fun handleAlarmClockLaunchIfNeeded(launchIntent: Intent?): Boolean {
+        if (launchIntent?.getBooleanExtra(EXTRA_FROM_ALARM_CLOCK, false) != true) return false
+
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val isInteractive = pm?.isInteractive ?: true
+        val modeName = launchIntent.getStringExtra(EXTRA_SHUTDOWN_MODE)
+        val mode = runCatching {
+            if (modeName != null) ShutdownMode.valueOf(modeName) else ShutdownMode.BANK_SAFE_SLEEP
+        }.getOrDefault(ShutdownMode.BANK_SAFE_SLEEP)
+        val fadeAudio = launchIntent.getBooleanExtra(EXTRA_FADE_AUDIO, true)
+
+        if (!isInteractive) {
+            TimerForegroundService.notifyAlarmClockTriggered(
+                applicationContext,
+                mode,
+                fadeAudio,
+                wasInteractive = false
+            )
+            finishAndRemoveTask()
+            return true
+        }
+
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        val isAdminActive = dpm?.isAdminActive(ComponentName(this, DeviceAdminSampleReceiver::class.java)) ?: false
+        val hasAcc = PowerAccessibilityService.instance != null
+        val canWrite = Settings.System.canWrite(this)
+
+        // Nếu chọn Tắt Chuẩn Ngân Hàng nhưng chưa cấp bất kỳ quyền khóa nào -> Ở lại Màn Đen OLED 0% bảo vệ pin ngay!
+        if (mode == ShutdownMode.BANK_SAFE_SLEEP && !canWrite && !isAdminActive && !hasAcc) {
+            TimerForegroundService.notifyAlarmClockTriggered(
+                applicationContext,
+                mode,
+                fadeAudio,
+                wasInteractive = true
+            )
+            renderOledBatteryGuardUi()
+            return true
+        }
+
+        // Từ Activity đang ở Foreground, gọi thẳng CATEGORY_HOME (100% thành công, không bao giờ bị BAL chặn!)
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        }
+        runCatching { startActivity(homeIntent) }
+
+        if (mode == ShutdownMode.BANK_SAFE_SLEEP && canWrite) {
+            applyMinimumScreenTimeout(applicationContext)
+        }
+
+        TimerForegroundService.notifyAlarmClockTriggered(
+            applicationContext,
+            mode,
+            fadeAudio,
+            wasInteractive = true
+        )
+        finishAndRemoveTask()
+        return true
+    }
+
+    private fun renderOledBatteryGuardUi() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val params = window.attributes
-        params.screenBrightness = 0.01f
+        params.screenBrightness = 0.0f
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -436,9 +491,9 @@ class BlackoutSleepActivity : Activity() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             val hint = TextView(this@BlackoutSleepActivity).apply {
-                text = "Đang tắt màn hình...\nChạm 1 lần vào màn hình để hủy & quay lại"
-                setTextColor(Color.argb(115, 255, 255, 255))
-                textSize = 13f
+                text = "🌙 Đã hết giờ hẹn • Màn hình sẽ tự tắt\nChạm 1 lần vào bất kỳ đâu để hủy"
+                setTextColor(Color.argb(65, 255, 255, 255))
+                textSize = 12.5f
                 gravity = Gravity.CENTER
             }
             addView(
@@ -450,8 +505,9 @@ class BlackoutSleepActivity : Activity() {
                 )
             )
 
-            // Chạm 1 lần duy nhất ở bất kỳ đâu để hủy tắt màn hình và thoát ngay, tuyệt đối không gây kẹt màn hình!
+            // Chạm 1 lần duy nhất ở bất kỳ đâu để hủy tắt màn hình & dừng Enforcer ngay lập tức!
             setOnClickListener {
+                TimerForegroundService.cancelEnforcementByUser(applicationContext)
                 restoreOriginalScreenTimeout(applicationContext)
                 finishAndRemoveTask()
             }
@@ -459,22 +515,16 @@ class BlackoutSleepActivity : Activity() {
         setContentView(root)
         hideSystemUI(root)
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        if (!receiverRegistered) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+                }
+                receiverRegistered = true
             }
-            receiverRegistered = true
-        } catch (_: Throwable) {
         }
-
-        handler.postDelayed({
-            restoreOriginalScreenTimeout(applicationContext)
-            if (!isFinishing && !isDestroyed) {
-                finishAndRemoveTask()
-            }
-        }, 20_000L)
     }
 
     private fun hideSystemUI(view: View) {
@@ -499,14 +549,9 @@ class BlackoutSleepActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        handler.removeCallbacksAndMessages(null)
         if (receiverRegistered) {
-            try {
-                unregisterReceiver(screenOffReceiver)
-            } catch (_: Throwable) {
-            }
+            runCatching { unregisterReceiver(screenOffReceiver) }
             receiverRegistered = false
         }
-        restoreOriginalScreenTimeout(applicationContext)
     }
 }

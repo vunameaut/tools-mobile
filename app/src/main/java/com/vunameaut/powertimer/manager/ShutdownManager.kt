@@ -4,6 +4,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import com.vunameaut.powertimer.data.model.ShutdownMode
 import com.vunameaut.powertimer.receiver.DeviceAdminSampleReceiver
@@ -14,6 +15,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
+data class ShutdownExecutionResult(
+    val succeeded: Boolean,
+    val appliedTimeoutMs: Int = -1,
+    val engagedOledGuard: Boolean = false
+)
+
 class ShutdownManager(private val context: Context) {
 
     companion object {
@@ -23,21 +30,30 @@ class ShutdownManager(private val context: Context) {
 
     private val audioMediaManager = AudioMediaManager(context)
 
-    /**
-     * Thực thi quy trình tắt màn hình thật (Lock Screen) & dừng phát media (TikTok, Facebook, YouTube...):
-     * - KHÔNG giữ màn hình đen phủ đè gây kẹt cảm ứng / video chạy ngầm.
-     * - KHÔNG hạ âm lượng máy về 0.
-     * - Thoát ứng dụng video về Màn hình chính (Home) rồi khóa màn hình phần cứng thật ngay lập tức!
-     */
     suspend fun executeShutdown(
         mode: ShutdownMode,
         fadeAudio: Boolean = true
-    ): Boolean = withContext(Dispatchers.Main) {
+    ): Boolean = executeShutdownWithResult(mode, fadeAudio, holdFocusUntilScreenOff = false).succeeded
+
+    /**
+     * Thực thi quy trình tắt màn hình thật (Lock Screen) & dừng phát media (TikTok, Facebook, YouTube...):
+     * - KHÔNG hạ âm lượng máy về 0.
+     * - Khi [holdFocusUntilScreenOff] = true, giữ AudioFocus xuyên suốt cửa sổ 15s–40s cho tới khi
+     *   màn hình thực sự tắt (khắc phục lỗi Vivo OriginOS Video app tự play lại sau 6 giây).
+     */
+    suspend fun executeShutdownWithResult(
+        mode: ShutdownMode,
+        fadeAudio: Boolean = true,
+        holdFocusUntilScreenOff: Boolean = true
+    ): ShutdownExecutionResult = withContext(Dispatchers.Main) {
         val now = System.currentTimeMillis()
         val prev = lastExecutionEpochMs.get()
         if (now - prev < 2500L) {
             Log.i(TAG, "Skipping duplicate executeShutdown triggered within 2.5s")
-            return@withContext true
+            val curTimeout = runCatching {
+                Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 15_000)
+            }.getOrDefault(15_000)
+            return@withContext ShutdownExecutionResult(succeeded = true, appliedTimeoutMs = curTimeout)
         }
         lastExecutionEpochMs.set(now)
 
@@ -46,63 +62,96 @@ class ShutdownManager(private val context: Context) {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val isScreenCurrentlyOn = pm?.isInteractive ?: true
 
-        // 1. Dừng ngay lập tức nhạc/video qua AudioFocus + KeyEvent + MediaSession
-        audioMediaManager.pauseAllMedia()
-
-        // 2. Xử lý khi màn hình đang sáng
-        val lockResult = if (isScreenCurrentlyOn) {
-            when (mode) {
-                ShutdownMode.BANK_SAFE_SLEEP -> executeBankSafeSleep()
-                ShutdownMode.DEVICE_ADMIN -> executeDeviceAdminLock()
-                ShutdownMode.MEDIA_ONLY -> {
-                    // Nếu đang mở TikTok/Douyin (không nghe lệnh AudioFocus khi ở Foreground),
-                    // tự động thoát về Màn hình chính (Home) để dừng video 100% và cho máy tự tắt theo timeout!
-                    BlackoutSleepActivity.launchHomeScreenFromBackground(context)
-                    Log.i(TAG, "Media paused & returned Home in MEDIA_ONLY mode.")
-                    true
-                }
-                ShutdownMode.ACCESSIBILITY -> executeAccessibilityLock()
-                ShutdownMode.HOME_AND_LOCK -> executeHomeAndLock()
-            }
+        // 1. Dừng & giữ chặt AudioFocus ngay lập tức để ngăn TikTok / FB / YT phát tiếp
+        if (holdFocusUntilScreenOff && isScreenCurrentlyOn && mode != ShutdownMode.MEDIA_ONLY) {
+            audioMediaManager.holdMediaPauseFocus(ShutdownEnforcementPolicy.FULL_LOCK_MAX_FOCUS_HOLD_MS)
         } else {
-            Log.i(TAG, "Screen is already off (non-interactive). Skipping screen lock UI.")
-            true
+            audioMediaManager.pauseAllMediaAndReleaseFocus(ShutdownEnforcementPolicy.MEDIA_ONLY_FOCUS_HOLD_MS)
         }
 
-        // 3. Bồi thêm nhịp Pause & Voice Focus pulse để chắc chắn các trình phát khác dừng hẳn
-        withContext(Dispatchers.IO) {
-            audioMediaManager.pauseAllMediaAndReleaseFocus()
+        if (!isScreenCurrentlyOn) {
+            Log.i(TAG, "Screen is already off (non-interactive). Media paused cleanly without waking screen.")
+            return@withContext ShutdownExecutionResult(succeeded = true)
         }
 
-        return@withContext lockResult
+        var appliedTimeoutMs = -1
+        var engagedOledGuard = false
+
+        val lockResult = when (mode) {
+            ShutdownMode.BANK_SAFE_SLEEP -> {
+                val res = executeBankSafeSleepWithResult()
+                appliedTimeoutMs = res.appliedTimeoutMs
+                engagedOledGuard = res.engagedOledGuard
+                res.succeeded
+            }
+            ShutdownMode.DEVICE_ADMIN -> executeDeviceAdminLock(allowFallback = true)
+            ShutdownMode.MEDIA_ONLY -> {
+                BlackoutSleepActivity.launchHomeScreenFromBackground(context)
+                Log.i(TAG, "Media paused & returned Home in MEDIA_ONLY mode.")
+                true
+            }
+            ShutdownMode.ACCESSIBILITY -> executeAccessibilityLock()
+            ShutdownMode.HOME_AND_LOCK -> executeHomeAndLock()
+        }
+
+        return@withContext ShutdownExecutionResult(
+            succeeded = lockResult,
+            appliedTimeoutMs = appliedTimeoutMs,
+            engagedOledGuard = engagedOledGuard
+        )
     }
 
-    /**
-     * Chế độ Tắt màn hình Chuẩn Ngân Hàng (Giữ nguyên 100% mở khóa Vân tay / Khuôn mặt):
-     * Thoát ứng dụng video (TikTok/FB/YT) ra Màn hình chính thật + hạ thời gian chờ xuống mức tối thiểu
-     * -> Máy tự tắt & khóa Lock Screen tự nhiên (TUYỆT ĐỐI KHÔNG gọi DevicePolicyManager.lockNow()
-     *    vì hàm đó kích hoạt cờ STRONG_AUTH của Android làm vô hiệu hóa Vân tay ở lần mở máy sau!).
-     */
-    private suspend fun executeBankSafeSleep(): Boolean {
+    suspend fun reassertMediaAndTimeout(mode: ShutdownMode) = withContext(Dispatchers.Main) {
+        audioMediaManager.holdMediaPauseFocus(ShutdownEnforcementPolicy.FULL_LOCK_MAX_FOCUS_HOLD_MS)
+        if (mode == ShutdownMode.BANK_SAFE_SLEEP && Settings.System.canWrite(context)) {
+            BlackoutSleepActivity.applyMinimumScreenTimeout(context)
+        }
+    }
+
+    fun releaseHeldAudioFocus() {
+        audioMediaManager.releaseHeldMediaFocus()
+    }
+
+    fun restoreTimeoutIfModified() {
+        BlackoutSleepActivity.restoreOriginalScreenTimeout(context)
+    }
+
+    private suspend fun executeBankSafeSleepWithResult(): ShutdownExecutionResult {
         return try {
             val acc = PowerAccessibilityService.instance
             if (acc != null) {
-                // Nếu người dùng đã bật Trợ năng: Về Home + Khóa màn hình thật trong 0.1s (giữ nguyên Vân tay)
-                // và TỰ ĐỘNG TẮT Trợ năng ngay sau 0.8s để dùng App Ngân hàng bình thường!
                 acc.performGoHome()
                 delay(250L)
                 if (acc.performLockScreen(autoDisableAfterLock = true)) {
-                    return true
+                    return ShutdownExecutionResult(succeeded = true)
                 }
             }
             PowerAccessibilityService.disableAndHideForBanking(context)
-            BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
-            true
+
+            if (Settings.System.canWrite(context)) {
+                val applied = BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
+                return ShutdownExecutionResult(succeeded = true, appliedTimeoutMs = applied)
+            }
+
+            // Fallback thông minh nếu người dùng chưa cấp WRITE_SETTINGS (ví dụ bật nhanh từ Widget)
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val adminComponent = ComponentName(context, DeviceAdminSampleReceiver::class.java)
+            if (dpm.isAdminActive(adminComponent)) {
+                BlackoutSleepActivity.launchHomeScreenFromBackground(context)
+                delay(150L)
+                dpm.lockNow()
+                return ShutdownExecutionResult(succeeded = true)
+            }
+
+            BlackoutSleepActivity.launchOledBatteryGuard(context)
+            ShutdownExecutionResult(succeeded = true, engagedOledGuard = true)
         } catch (e: Throwable) {
             Log.e(TAG, "BankSafeSleep error: ${e.message}")
-            false
+            ShutdownExecutionResult(succeeded = false)
         }
     }
+
+    private suspend fun executeBankSafeSleep(): Boolean = executeBankSafeSleepWithResult().succeeded
 
     private suspend fun executeDeviceAdminLock(allowFallback: Boolean = true): Boolean {
         try {
@@ -118,7 +167,11 @@ class ShutdownManager(private val context: Context) {
             Log.e(TAG, "DeviceAdmin lockNow error: ${e.message}")
         }
         if (allowFallback) {
-            BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
+            if (Settings.System.canWrite(context)) {
+                BlackoutSleepActivity.triggerNaturalHomeScreenLock(context)
+            } else {
+                BlackoutSleepActivity.launchOledBatteryGuard(context)
+            }
             return true
         }
         return false

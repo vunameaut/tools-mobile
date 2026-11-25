@@ -195,7 +195,8 @@ class ToolsHubAppWidgetProvider : AppWidgetProvider() {
                     TimerForegroundService.startTimer(
                         context = context,
                         seconds = 30 * 60L,
-                        mode = ShutdownMode.BANK_SAFE_SLEEP
+                        mode = ShutdownMode.BANK_SAFE_SLEEP,
+                        shakeToExtend = false
                     )
                     Toast.makeText(context, "Đã bật hẹn giờ tắt màn hình 30 phút!", Toast.LENGTH_SHORT).show()
                 }

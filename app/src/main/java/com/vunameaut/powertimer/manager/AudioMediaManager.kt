@@ -45,17 +45,11 @@ class AudioMediaManager(private val context: Context) {
 
     /**
      * Dừng triệt để mọi nhạc & video đang phát (TikTok / Douyin / Facebook / YouTube / Spotify / Zing MP3...)
-     * mà TUYỆT ĐỐI KHÔNG HẠ ÂM LƯỢNG MÁY VỀ 0 (giữ nguyên mức âm lượng hiện tại của người dùng).
+     * và GIỮ CHẶT AudioFocus cho đến khi màn hình tắt hẳn (hoặc tối đa [maxHoldMs] giây).
+     * Tuyệt đối KHÔNG hạ âm lượng máy về 0.
      */
-    suspend fun pauseAllMediaAndReleaseFocus() {
-        // Phục hồi nếu âm lượng bị kẹt ở mức 0 từ bản cũ
-        runCatching {
-            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            if (curVol == 0 && maxVol > 0) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol / 3).coerceAtLeast(3), 0)
-            }
-        }
+    suspend fun holdMediaPauseFocus(maxHoldMs: Long = ShutdownEnforcementPolicy.FULL_LOCK_MAX_FOCUS_HOLD_MS) {
+        restoreStuckZeroVolumeIfNeeded()
 
         // 1. Dừng trực tiếp các MediaSession đang hoạt động (Facebook, YouTube, Spotify...)
         pauseActiveMediaSessionsViaController()
@@ -67,7 +61,7 @@ class AudioMediaManager(private val context: Context) {
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
         sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_STOP)
 
-        // 4. Phát xung âm thanh tĩnh trên luồng nền để AudioFlinger Vivo OriginOS cưỡng bức thu hồi focus khỏi TikTok/FB
+        // 4. Phát xung âm thanh micro-PCM trên luồng nền để AudioFlinger cưỡng bức thu hồi focus khỏi TikTok/FB
         bgScope.launch {
             playSilentFocusTriggerPulseAsync()
             delay(350L)
@@ -81,11 +75,31 @@ class AudioMediaManager(private val context: Context) {
             sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
         }
 
-        // 5. Giữ AudioFocus 6 giây rồi mới nhả để không ảnh hưởng chuông cuộc gọi / báo thức
+        // 5. Giữ AudioFocus xuyên suốt cửa sổ chờ tắt màn hình (mặc định 42s, giải phóng sớm ngay khi ACTION_SCREEN_OFF)
         releaseFocusJob?.cancel()
         releaseFocusJob = bgScope.launch {
-            delay(6000L)
+            delay(maxHoldMs.coerceAtLeast(1_000L))
             abandonHeldAudioFocus()
+        }
+    }
+
+    suspend fun pauseAllMediaAndReleaseFocus(holdDurationMs: Long = ShutdownEnforcementPolicy.MEDIA_ONLY_FOCUS_HOLD_MS) {
+        holdMediaPauseFocus(maxHoldMs = holdDurationMs)
+    }
+
+    fun releaseHeldMediaFocus() {
+        releaseFocusJob?.cancel()
+        releaseFocusJob = null
+        abandonHeldAudioFocus()
+    }
+
+    private fun restoreStuckZeroVolumeIfNeeded() {
+        runCatching {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (curVol == 0 && maxVol > 0) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol / 3).coerceAtLeast(3), 0)
+            }
         }
     }
 

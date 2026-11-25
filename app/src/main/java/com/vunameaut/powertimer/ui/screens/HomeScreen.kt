@@ -92,6 +92,7 @@ fun HomeScreen(
     val selectedSeconds by viewModel.selectedSeconds.collectAsState()
     val selectedMode by viewModel.selectedMode.collectAsState()
     val permissions by viewModel.permissions.collectAsState()
+    val shakeToExtend by viewModel.shakeToExtend.collectAsState()
     val context = LocalContext.current
 
     LaunchedEffect(Unit) {
@@ -102,6 +103,7 @@ fun HomeScreen(
 
     var showPicker by remember { mutableStateOf(false) }
     var showStopConfirm by remember { mutableStateOf(false) }
+    var showMissingWriteSettingsDialog by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     var alwaysShowWaterdrop by remember {
         mutableStateOf(SystemDynamicIslandManager.isEnabled(context))
@@ -177,6 +179,41 @@ fun HomeScreen(
             dismissButton = {
                 TextButton(onClick = { showStopConfirm = false }) {
                     Text("Giữ lại", color = AccentCyan, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showMissingWriteSettingsDialog) {
+        AlertDialog(
+            onDismissRequest = { showMissingWriteSettingsDialog = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("Chưa cấp quyền Hạ thời gian sáng", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Để chế độ Chuẩn Ngân Hàng tự thoát TikTok/YouTube về Màn hình chính và tắt khóa màn hình phần cứng (giữ Vân tay), bạn cần bật \"Cho phép sửa cài đặt hệ thống\".\n\nNếu chưa cấp ngay, app vẫn chạy với lớp Màn đen OLED 0% để bảo vệ pin không bị sáng cả đêm.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showMissingWriteSettingsDialog = false
+                        viewModel.openWriteSettingsPermission()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Cấp quyền ngay", fontWeight = FontWeight.Bold, color = Color.Black) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showMissingWriteSettingsDialog = false
+                        viewModel.startTimer()
+                    }
+                ) {
+                    Text("Vẫn chạy (Màn đen 0%)", color = AccentGreen, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -526,7 +563,7 @@ fun HomeScreen(
 
                 ShutdownMode.entries.forEach { mode ->
                     val isAvailable = when (mode) {
-                        ShutdownMode.BANK_SAFE_SLEEP -> permissions.isDeviceAdminActive || permissions.canWriteSettings
+                        ShutdownMode.BANK_SAFE_SLEEP -> permissions.canWriteSettings
                         ShutdownMode.DEVICE_ADMIN -> permissions.isDeviceAdminActive
                         ShutdownMode.MEDIA_ONLY -> true
                         ShutdownMode.ACCESSIBILITY, ShutdownMode.HOME_AND_LOCK -> permissions.isAccessibilityEnabled
@@ -538,6 +575,46 @@ fun HomeScreen(
                         onSelect = { viewModel.setMode(mode) },
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📳 Lắc mạnh để +10 phút",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Mặc định tắt để tránh cựa mình khi ngủ làm cộng thêm giờ. Bật nếu muốn lắc mạnh 2 lần để +10 phút.",
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = shakeToExtend,
+                            onCheckedChange = { viewModel.toggleShakeToExtend(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = AccentCyan
+                            )
+                        )
+                    }
                 }
             } else {
                 // Đang đếm ngược
@@ -554,7 +631,11 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "✨ Mẹo: Bạn có thể lắc nhẹ điện thoại bất kỳ lúc nào để tự động cộng thêm 10 phút mà không cần mở sáng màn hình!",
+                            text = if (timerState.shakeToExtend) {
+                                "✨ Mẹo: Bạn có thể lắc mạnh điện thoại 2 lần bất kỳ lúc nào để cộng thêm 10 phút!"
+                            } else {
+                                "🌙 Đã khóa tính năng lắc +10 phút để tránh chạm/cựa mình khi ngủ làm kéo dài thời gian tắt màn hình."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                             lineHeight = 18.sp
@@ -576,7 +657,13 @@ fun HomeScreen(
             ) { running ->
             if (!running) {
                 Button(
-                    onClick = { viewModel.startTimer() },
+                    onClick = {
+                        if (selectedMode == ShutdownMode.BANK_SAFE_SLEEP && !permissions.canWriteSettings) {
+                            showMissingWriteSettingsDialog = true
+                        } else {
+                            viewModel.startTimer()
+                        }
+                    },
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
                     modifier = Modifier
