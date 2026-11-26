@@ -234,13 +234,8 @@ class MainActivity : ComponentActivity() {
             currentRoute = "tool:video_downloader"
 
             if (!extractedUrl.isNullOrBlank()) {
-                val platform = VideoPlatform.detect(extractedUrl)
-                VideoDownloadService.startDownload(this, extractedUrl)
-                Toast.makeText(
-                    this,
-                    "Đang tự động tải video ${platform.displayName}...",
-                    Toast.LENGTH_LONG
-                ).show()
+                // Không tự tải ngay; mở hộp thoại cho người dùng chọn định dạng muốn tải (MP4 HD, SD, MP3...)
+                VideoDownloadService.submitPendingSharedUrl(extractedUrl)
             } else {
                 Toast.makeText(
                     this,

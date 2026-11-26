@@ -150,10 +150,12 @@ fun VideoDownloaderTool(
     }
 
     val tasks by VideoDownloadService.tasks.collectAsState()
+    val pendingShared by VideoDownloadService.pendingSharedDownload.collectAsState()
     var urlInput by rememberSaveable { mutableStateOf("") }
     var selectedPreference by remember {
         mutableStateOf(DirectVideoExtractor.getDownloadPreference(context))
     }
+    var sharedUrlForChoice by remember { mutableStateOf<String?>(null) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var serverUrlInput by remember { mutableStateOf(DirectVideoExtractor.getServerUrl(context)) }
     var isUpdatingYtdlp by remember { mutableStateOf(false) }
@@ -161,6 +163,15 @@ fun VideoDownloaderTool(
     // Format / Quality Picker state
     var isInspectingFormats by remember { mutableStateOf(false) }
     var extractedForPicker by remember { mutableStateOf<ExtractedVideo?>(null) }
+
+    LaunchedEffect(pendingShared?.requestId) {
+        val req = pendingShared
+        if (req != null) {
+            urlInput = req.url
+            sharedUrlForChoice = req.url
+            VideoDownloadService.clearPendingSharedUrl(req.requestId)
+        }
+    }
 
     // Story Login WebView dialog state
     var loginDialogPlatform by remember { mutableStateOf<VideoPlatform?>(null) }
@@ -531,7 +542,7 @@ fun VideoDownloaderTool(
                         // Format / Quality Preference Selector
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "Chế độ tải mặc định (áp dụng cả khi bấm Chia sẻ từ app khác):",
+                                text = "Chế độ tải nhanh trong app (Chia sẻ link từ app khác sẽ luôn hỏi bạn chọn định dạng trước):",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = TextSecondary,
                                     fontSize = 11.5.sp
@@ -807,6 +818,38 @@ fun VideoDownloaderTool(
         }
     }
 
+    // Shared Link Format Chooser Dialog (triggered whenever user shares a link into Tools Hub)
+    val pendingChoiceUrl = sharedUrlForChoice
+    if (pendingChoiceUrl != null) {
+        SharedLinkFormatChooserDialog(
+            url = pendingChoiceUrl,
+            onDismiss = { sharedUrlForChoice = null },
+            onSelectQuickPreference = { pref ->
+                sharedUrlForChoice = null
+                urlInput = ""
+                VideoDownloadService.startDownload(context, pendingChoiceUrl, pref)
+                val label = when (pref) {
+                    DownloadPreference.AUDIO_MP3 -> "âm thanh MP3"
+                    DownloadPreference.VIDEO_SD -> "video MP4 SD"
+                    else -> "video MP4 HD / Full Ảnh"
+                }
+                Toast.makeText(
+                    context,
+                    "Đang tải $label từ ${VideoPlatform.detect(pendingChoiceUrl).displayName}...",
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            onInspectDetailedFormats = {
+                sharedUrlForChoice = null
+                inspectAndPickFormat(pendingChoiceUrl)
+            },
+            onPasteOnly = {
+                sharedUrlForChoice = null
+                Toast.makeText(context, "Đã dán link — sẵn sàng chọn cách tải!", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
     // Format / Quality & Multi-Photo Picker Dialog
     val currentExtracted = extractedForPicker
     if (currentExtracted != null) {
@@ -1076,6 +1119,177 @@ private fun StoryLoginChip(
 }
 
 @Composable
+private fun SharedLinkFormatChooserDialog(
+    url: String,
+    onDismiss: () -> Unit,
+    onSelectQuickPreference: (DownloadPreference) -> Unit,
+    onInspectDetailedFormats: () -> Unit,
+    onPasteOnly: () -> Unit
+) {
+    val platform = remember(url) { VideoPlatform.detect(url) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = DarkSurface,
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .border(1.dp, OutlineSoft, RoundedCornerShape(24.dp))
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(18.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PlatformBadge(platform = platform)
+                        Text(
+                            text = "Chọn định dạng muốn tải",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Rounded.Clear,
+                            contentDescription = "Đóng",
+                            tint = TextSecondary
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = DarkSurfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = url,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = TextSecondary,
+                            fontSize = 11.5.sp
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+
+                SharedChoiceCard(
+                    icon = Icons.Rounded.VideoFile,
+                    title = "Video MP4 (HD / Không logo / Full Ảnh)",
+                    subtitle = "Tải chất lượng cao nhất có sẵn hoặc trọn bộ ảnh",
+                    accentColor = AccentGreen,
+                    onClick = { onSelectQuickPreference(DownloadPreference.AUTO_HD) }
+                )
+
+                SharedChoiceCard(
+                    icon = Icons.Rounded.HighQuality,
+                    title = "Video MP4 (SD — Nhẹ máy)",
+                    subtitle = "Dung lượng gọn, tiết kiệm dữ liệu",
+                    accentColor = AccentCyan,
+                    onClick = { onSelectQuickPreference(DownloadPreference.VIDEO_SD) }
+                )
+
+                SharedChoiceCard(
+                    icon = Icons.Rounded.MusicNote,
+                    title = "Âm thanh MP3 (Tách nhạc từ Video)",
+                    subtitle = "Chỉ lấy tiếng / nhạc nền để nghe hoặc làm soundboard",
+                    accentColor = AccentAmber,
+                    onClick = { onSelectQuickPreference(DownloadPreference.AUDIO_MP3) }
+                )
+
+                SharedChoiceCard(
+                    icon = Icons.Rounded.Tune,
+                    title = "Phân tích & Chọn từng định dạng chi tiết",
+                    subtitle = "Xem danh sách 1080p, 720p, MP3, tải lẻ từng ảnh...",
+                    accentColor = AccentPurple,
+                    onClick = onInspectDetailedFormats
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onPasteOnly) {
+                        Text("Chỉ dán link (Chưa tải)", color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedChoiceCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = DarkSurfaceVariant.copy(alpha = 0.6f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(22.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                )
+            }
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun FormatSelectionDialog(
     extracted: ExtractedVideo,
     onDismiss: () -> Unit,
@@ -1088,7 +1302,26 @@ private fun FormatSelectionDialog(
         extracted.formats.filter { it.mediaType == MediaType.VIDEO }
     }
     val audioFormats = remember(extracted) {
-        extracted.formats.filter { it.mediaType == MediaType.AUDIO }
+        val rawAudio = extracted.formats.filter { it.mediaType == MediaType.AUDIO }
+        if (rawAudio.isNotEmpty()) {
+            rawAudio
+        } else if (videoFormats.isNotEmpty()) {
+            val firstVideo = videoFormats.first()
+            listOf(
+                VideoFormatOption(
+                    id = "extract_mp3_from_video",
+                    label = "🎵 Tách nhạc MP3 từ Video",
+                    qualityBadge = "MP3",
+                    downloadUrl = firstVideo.downloadUrl,
+                    mediaType = MediaType.AUDIO,
+                    ext = "m4a",
+                    extractAudioFromVideo = true,
+                    headers = firstVideo.headers.ifEmpty { extracted.headers }
+                )
+            )
+        } else {
+            emptyList()
+        }
     }
     val imageFormats = remember(extracted) {
         extracted.formats.filter { it.mediaType == MediaType.IMAGE }

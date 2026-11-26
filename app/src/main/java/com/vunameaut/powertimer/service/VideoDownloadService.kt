@@ -90,6 +90,30 @@ class VideoDownloadService : Service() {
 
         private val preExtractedQueue = ConcurrentHashMap<String, PreExtractedRequest>()
 
+        data class PendingSharedDownload(
+            val requestId: Long,
+            val url: String
+        )
+
+        private val _pendingSharedDownload = MutableStateFlow<PendingSharedDownload?>(null)
+        val pendingSharedDownload: StateFlow<PendingSharedDownload?> = _pendingSharedDownload.asStateFlow()
+
+        fun submitPendingSharedUrl(url: String) {
+            val clean = VideoPlatform.extractFirstUrl(url) ?: url.trim()
+            if (clean.isBlank()) return
+            _pendingSharedDownload.value = PendingSharedDownload(
+                requestId = System.nanoTime(),
+                url = clean
+            )
+        }
+
+        fun clearPendingSharedUrl(requestId: Long? = null) {
+            val current = _pendingSharedDownload.value
+            if (requestId == null || current?.requestId == requestId) {
+                _pendingSharedDownload.value = null
+            }
+        }
+
         private val _tasks = MutableStateFlow<List<DownloadTaskState>>(emptyList())
         val tasks: StateFlow<List<DownloadTaskState>> = _tasks.asStateFlow()
 

@@ -129,7 +129,7 @@ val ToolRegistry: List<ToolEntry> = listOf(
     ToolEntry(
         id = "meme_soundboard",
         title = "Túi Âm Thanh Vui Nhộn",
-        description = "Phát tiếng vỗ tay rần rần, tiếng dế kêu, trống tùng xèng, còi hơi, cười khả ố...",
+        description = "Vỗ tay, dế kêu, còi hơi... • Tải âm thanh của riêng bạn lên & xóa bớt nút tùy ý",
         icon = Icons.Rounded.MusicNote,
         accent = AccentPink,
         content = { onBack -> MemeSoundboardTool(onExit = onBack) }
