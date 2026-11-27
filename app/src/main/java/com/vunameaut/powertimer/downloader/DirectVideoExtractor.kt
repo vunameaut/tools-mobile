@@ -204,7 +204,7 @@ object DirectVideoExtractor {
             onStatusUpdate("Đang trích xuất nhanh (${platform.displayName})...")
             return try {
                 val direct = when (platform) {
-                    VideoPlatform.TIKTOK -> extractTikTokDirect(cleanUrl)
+                    VideoPlatform.TIKTOK -> extractTikTokDirect(cleanUrl, cookie, context)
                     VideoPlatform.FACEBOOK -> extractFacebookDirect(cleanUrl, cookie, context)
                     VideoPlatform.INSTAGRAM -> extractInstagramDirect(cleanUrl, cookie, context)
                     VideoPlatform.TWITTER -> extractTwitterDirect(cleanUrl)
@@ -270,9 +270,124 @@ object DirectVideoExtractor {
     }
 
     // ========================================================================
-    // TIER 1A: TIKTOK (Video HD/SD + MP3 Audio + Photo Mode Slideshow)
+    // TIER 1A: TIKTOK (Video HD/SD + Story Video/Ảnh + MP3 Audio + Slideshow)
     // ========================================================================
-    internal fun extractTikTokDirect(url: String): ExtractedVideo? {
+    internal fun extractTikTokItemId(url: String): String? {
+        val patterns = listOf(
+            Regex("""/(?:story|video|photo|v)/(\d{15,22})""", RegexOption.IGNORE_CASE),
+            Regex("""[?&](?:item_id|aweme_id|story_id)=(\d{15,22})""", RegexOption.IGNORE_CASE)
+        )
+        for (p in patterns) {
+            val match = p.find(url)
+            if (match != null) return match.groupValues[1]
+        }
+        return null
+    }
+
+    internal fun buildTikTokStoryCandidateUrls(rawUrl: String, resolvedUrl: String? = null): List<String> {
+        val candidates = LinkedHashSet<String>()
+        if (rawUrl.isNotBlank()) candidates.add(rawUrl.trim())
+        if (!resolvedUrl.isNullOrBlank()) candidates.add(resolvedUrl.trim())
+
+        val sourceForId = resolvedUrl?.takeIf { it.isNotBlank() } ?: rawUrl
+        val itemId = extractTikTokItemId(sourceForId) ?: extractTikTokItemId(rawUrl)
+        val userMatch = Regex("""/@([^/?#]+)""").find(sourceForId) ?: Regex("""/@([^/?#]+)""").find(rawUrl)
+        val username = userMatch?.groupValues?.get(1)
+
+        if (!itemId.isNullOrBlank()) {
+            if (!username.isNullOrBlank()) {
+                candidates.add("https://www.tiktok.com/@$username/video/$itemId")
+            }
+            candidates.add("https://www.tiktok.com/video/$itemId")
+            candidates.add("https://m.tiktok.com/v/$itemId.html")
+        }
+        return candidates.toList()
+    }
+
+    internal suspend fun extractTikTokDirect(
+        url: String,
+        cookie: String = "",
+        context: Context? = null
+    ): ExtractedVideo? {
+        // 1. Thử nhanh TikWM với link gốc trước (cho video thường)
+        queryTikwmApi(originalSourceUrl = url, apiTargetUrl = url)?.let { return it }
+
+        // 2. Giải mã link rút gọn (vt.tiktok.com / vm.tiktok.com / tiktok.com/t/...) để lấy đường dẫn Story/Video chuẩn
+        val navHeaders = mutableMapOf(
+            "User-Agent" to DESKTOP_UA,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "en-US,en;q=0.9,vi;q=0.8"
+        )
+        if (cookie.isNotBlank()) {
+            navHeaders["Cookie"] = cookie
+        }
+        val initialPage = runCatching { fetchUrlFollowingRedirects(url, navHeaders) }.getOrNull()
+        val resolvedUrl = initialPage?.finalUrl?.takeIf { it.startsWith("http") } ?: url
+        val candidates = buildTikTokStoryCandidateUrls(url, resolvedUrl)
+        val itemId = extractTikTokItemId(resolvedUrl) ?: extractTikTokItemId(url)
+
+        // 3. Thử lại TikWM với link Story đã chuẩn hóa sang dạng /video/{itemId}
+        for (candidate in candidates) {
+            if (candidate == url) continue
+            queryTikwmApi(originalSourceUrl = url, apiTargetUrl = candidate)?.let { return it }
+        }
+
+        // 4. Tier 2: Gọi TikTok Mobile Feed API (hỗ trợ tốt Story 24h mới đăng mà TikWM chưa kịp index)
+        if (!itemId.isNullOrBlank()) {
+            extractTikTokMobileFeed(originalSourceUrl = url, itemId = itemId)?.let { return it }
+        }
+
+        // 5. Tier 3: Parse trực tiếp HTML (__UNIVERSAL_DATA_FOR_REHYDRATION__ / SIGI_STATE / Embed v2)
+        val webTargets = LinkedHashSet<String>()
+        if (initialPage != null && initialPage.body.isNotBlank()) {
+            val dlHeaders = mutableMapOf(
+                "User-Agent" to DESKTOP_UA,
+                "Referer" to "https://www.tiktok.com/"
+            )
+            val mergedCookie = initialPage.cookies.ifBlank { cookie }
+            if (mergedCookie.isNotBlank()) dlHeaders["Cookie"] = mergedCookie
+            parseTikTokWebJson(url, initialPage.body, dlHeaders)?.let { return it }
+        }
+
+        for (candidate in candidates) {
+            if (candidate != resolvedUrl) webTargets.add(candidate)
+        }
+        if (!itemId.isNullOrBlank()) {
+            webTargets.add("https://www.tiktok.com/embed/v2/$itemId")
+        }
+
+        for (target in webTargets.take(3)) {
+            try {
+                val page = fetchUrlFollowingRedirects(target, navHeaders)
+                if (page.body.isBlank()) continue
+                val dlHeaders = mutableMapOf(
+                    "User-Agent" to DESKTOP_UA,
+                    "Referer" to "https://www.tiktok.com/"
+                )
+                val mergedCookie = page.cookies.ifBlank { cookie }
+                if (mergedCookie.isNotBlank()) dlHeaders["Cookie"] = mergedCookie
+                parseTikTokWebJson(url, page.body, dlHeaders)?.let { return it }
+            } catch (e: Throwable) {
+                Log.w(TAG, "TikTok web target failed ($target): ${e.message}")
+            }
+        }
+
+        // 6. Tier 4: Headless WebView Sniffer (bắt trực tiếp luồng MP4 TikTok Story trên trang web)
+        if (context != null) {
+            val wvHeaders = mutableMapOf(
+                "User-Agent" to DESKTOP_UA,
+                "Referer" to "https://www.tiktok.com/"
+            )
+            if (cookie.isNotBlank()) wvHeaders["Cookie"] = cookie
+            val wvTarget = candidates.firstOrNull { it.contains("/story/") } ?: resolvedUrl
+            val webViewResult = extractStoryViaWebView(context, wvTarget, VideoPlatform.TIKTOK, wvHeaders)
+            if (webViewResult != null) return webViewResult
+        }
+
+        return null
+    }
+
+    private fun queryTikwmApi(originalSourceUrl: String, apiTargetUrl: String): ExtractedVideo? {
         try {
             val apiConn = (URL("https://www.tikwm.com/api/").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -283,7 +398,7 @@ object DirectVideoExtractor {
                 setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
                 setRequestProperty("Accept", "application/json")
             }
-            val body = "url=${URLEncoder.encode(url, "UTF-8")}&hd=1"
+            val body = "url=${URLEncoder.encode(apiTargetUrl, "UTF-8")}&hd=1"
             OutputStreamWriter(apiConn.outputStream, Charsets.UTF_8).use { it.write(body) }
 
             if (apiConn.responseCode in 200..299) {
@@ -318,7 +433,6 @@ object DirectVideoExtractor {
                             "Referer" to "https://www.tikwm.com/"
                         )
 
-                        // Kiểm tra nếu là bài đăng nhiều ảnh (TikTok Photo Mode / Slideshow)
                         val imagesArr = data.optJSONArray("images")
                         if (imagesArr != null && imagesArr.length() > 0) {
                             val photoItems = mutableListOf<ExtractedMediaItem>()
@@ -354,7 +468,7 @@ object DirectVideoExtractor {
                                     )
                                 }
                                 return ExtractedVideo(
-                                    sourceUrl = url,
+                                    sourceUrl = originalSourceUrl,
                                     downloadUrl = photoItems.first().url,
                                     title = cleanTitle,
                                     author = authorName,
@@ -370,7 +484,6 @@ object DirectVideoExtractor {
                             }
                         }
 
-                        // Nếu là Video TikTok
                         val primaryVideoUrl = sequenceOf(playUrl, hdUrl, wmUrl)
                             .firstOrNull { it.isNotBlank() && !it.endsWith(".mp3") }
 
@@ -434,7 +547,7 @@ object DirectVideoExtractor {
                             )
 
                             return ExtractedVideo(
-                                sourceUrl = url,
+                                sourceUrl = originalSourceUrl,
                                 downloadUrl = hdUrl.takeIf { it.startsWith("http") && !it.endsWith(".mp3") } ?: primaryVideoUrl,
                                 title = cleanTitle,
                                 author = authorName,
@@ -451,52 +564,224 @@ object DirectVideoExtractor {
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "TikWM direct failed: ${e.message}")
+            Log.w(TAG, "TikWM direct failed ($apiTargetUrl): ${e.message}")
         }
+        return null
+    }
 
-        // Cách 2: Fetch trực tiếp trang TikTok + parse __UNIVERSAL_DATA_FOR_REHYDRATION__
-        try {
-            val page = fetchUrlFollowingRedirects(
-                targetUrl = url,
-                headers = mapOf(
-                    "User-Agent" to DESKTOP_UA,
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language" to "en-US,en;q=0.9"
-                )
-            )
-            val scriptMatch = Regex(
-                """<script[^>]+id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>""",
-                RegexOption.DOT_MATCHES_ALL
-            ).find(page.body)
-            if (scriptMatch != null) {
-                val jsonText = scriptMatch.groupValues[1]
-                val playAddrMatch = Regex(""""playAddr"\s*:\s*"([^"]+)"""").find(jsonText)
-                    ?: Regex(""""downloadAddr"\s*:\s*"([^"]+)"""").find(jsonText)
-                if (playAddrMatch != null) {
-                    val videoUrl = unescapeJsonString(playAddrMatch.groupValues[1])
-                    val descMatch = Regex(""""desc"\s*:\s*"([^"]*)"""").find(jsonText)
-                    val title = descMatch?.groupValues?.get(1)?.let { unescapeJsonString(it) }
-                        ?.takeIf { it.isNotBlank() } ?: "TikTok_Video"
-                    val dlHeaders = mutableMapOf(
-                        "User-Agent" to DESKTOP_UA,
-                        "Referer" to "https://www.tiktok.com/"
-                    )
-                    if (page.cookies.isNotBlank()) {
-                        dlHeaders["Cookie"] = page.cookies
+    private fun extractTikTokMobileFeed(originalSourceUrl: String, itemId: String): ExtractedVideo? {
+        val endpoints = listOf(
+            "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=$itemId",
+            "https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/feed/?aweme_id=$itemId"
+        )
+        val mobileUa = "com.zhiliaoapp.musically/2023501030 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230805.001)"
+        for (endpoint in endpoints) {
+            try {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10000
+                    readTimeout = 10000
+                    setRequestProperty("User-Agent", mobileUa)
+                    setRequestProperty("Accept", "application/json")
+                }
+                if (conn.responseCode !in 200..299) continue
+                val body = readStream(conn)
+                if (body.isBlank() || !body.trimStart().startsWith("{")) continue
+                val json = JSONObject(body)
+                val list = json.optJSONArray("aweme_list") ?: continue
+                var targetAweme: JSONObject? = null
+                for (i in 0 until list.length()) {
+                    val item = list.optJSONObject(i) ?: continue
+                    if (item.optString("aweme_id") == itemId) {
+                        targetAweme = item
+                        break
                     }
+                }
+                if (targetAweme == null) continue
+
+                val desc = targetAweme.optString("desc").ifBlank { "TikTok_Story_$itemId" }
+                val author = targetAweme.optJSONObject("author")?.let {
+                    it.optString("nickname").ifBlank { it.optString("unique_id") }
+                }.orEmpty()
+                val headers = mapOf("User-Agent" to mobileUa)
+                val musicUrl = targetAweme.optJSONObject("music")
+                    ?.optJSONObject("play_url")
+                    ?.optJSONArray("url_list")
+                    ?.optString(0)
+                    ?.takeIf { it.startsWith("http") }
+
+                // Photo Story (image_post_info)
+                val imgPostArr = targetAweme.optJSONObject("image_post_info")?.optJSONArray("images")
+                if (imgPostArr != null && imgPostArr.length() > 0) {
+                    val photoItems = mutableListOf<ExtractedMediaItem>()
+                    for (i in 0 until imgPostArr.length()) {
+                        val imgObj = imgPostArr.optJSONObject(i) ?: continue
+                        val imgUrl = imgObj.optJSONObject("display_image")
+                            ?.optJSONArray("url_list")
+                            ?.optString(0)
+                            .orEmpty()
+                        if (imgUrl.startsWith("http")) {
+                            photoItems.add(
+                                ExtractedMediaItem(
+                                    url = imgUrl,
+                                    mediaType = MediaType.IMAGE,
+                                    ext = "jpg",
+                                    titleSuffix = "Story_${i + 1}",
+                                    headers = headers
+                                )
+                            )
+                        }
+                    }
+                    if (photoItems.isNotEmpty()) {
+                        val formats = if (musicUrl != null) {
+                            listOf(
+                                VideoFormatOption(
+                                    id = "audio_mp3",
+                                    label = "🎵 Nhạc nền Story (MP3)",
+                                    qualityBadge = "MP3",
+                                    downloadUrl = musicUrl,
+                                    mediaType = MediaType.AUDIO,
+                                    ext = "mp3",
+                                    headers = headers
+                                )
+                            )
+                        } else emptyList()
+                        return ExtractedVideo(
+                            sourceUrl = originalSourceUrl,
+                            downloadUrl = photoItems.first().url,
+                            title = sanitizeTitle(desc),
+                            author = author,
+                            thumbnailUrl = photoItems.first().url,
+                            headers = headers,
+                            platform = VideoPlatform.TIKTOK,
+                            engineUsed = "On-Device TikTok Story Feed (${photoItems.size} ảnh)",
+                            mediaType = MediaType.IMAGE,
+                            formats = formats,
+                            mediaItems = photoItems
+                        )
+                    }
+                }
+
+                // Video Story
+                val videoObj = targetAweme.optJSONObject("video")
+                val playUrls = videoObj?.optJSONObject("play_addr")?.optJSONArray("url_list")
+                val dlUrls = videoObj?.optJSONObject("download_addr")?.optJSONArray("url_list")
+                val playUrl = (0 until (playUrls?.length() ?: 0))
+                    .mapNotNull { playUrls?.optString(it) }
+                    .firstOrNull { it.startsWith("http") }
+                val wmUrl = (0 until (dlUrls?.length() ?: 0))
+                    .mapNotNull { dlUrls?.optString(it) }
+                    .firstOrNull { it.startsWith("http") }
+                val bestVideo = playUrl ?: wmUrl
+                if (!bestVideo.isNullOrBlank()) {
                     return ExtractedVideo(
-                        sourceUrl = url,
+                        sourceUrl = originalSourceUrl,
+                        downloadUrl = bestVideo,
+                        title = sanitizeTitle(desc),
+                        author = author,
+                        headers = headers,
+                        platform = VideoPlatform.TIKTOK,
+                        engineUsed = "On-Device TikTok Story Direct",
+                        mediaType = MediaType.VIDEO,
+                        formats = buildDefaultFormats(bestVideo, playUrl, wmUrl, headers, MediaType.VIDEO, musicUrl)
+                    )
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "TikTok mobile feed failed ($endpoint): ${e.message}")
+            }
+        }
+        return null
+    }
+
+    internal fun parseTikTokWebJson(
+        sourceUrl: String,
+        htmlOrJson: String,
+        dlHeaders: Map<String, String>
+    ): ExtractedVideo? {
+        val scriptMatch = Regex(
+            """<script[^>]+id="(?:__UNIVERSAL_DATA_FOR_REHYDRATION__|SIGI_STATE)"[^>]*>(.*?)</script>""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(htmlOrJson)
+        val jsonText = scriptMatch?.groupValues?.get(1) ?: htmlOrJson
+
+        val descMatch = Regex(""""desc"\s*:\s*"([^"]*)"""").find(jsonText)
+        val title = descMatch?.groupValues?.get(1)?.let { unescapeJsonString(it) }
+            ?.takeIf { it.isNotBlank() } ?: "TikTok_Story"
+
+        val musicUrl = Regex(""""playUrl"\s*:\s*"(https?:[^"]+)"""").find(jsonText)
+            ?.groupValues?.get(1)?.let { unescapeJsonString(it) }
+
+        // 1. Kiểm tra Video Story / Video thường (hỗ trợ cả string phẳng lẫn mảng UrlList/urlList)
+        val videoPatterns = listOf(
+            Regex(""""playAddr"\s*:\s*"(https?:[^"]+)""""),
+            Regex(""""downloadAddr"\s*:\s*"(https?:[^"]+)""""),
+            Regex(""""PlayAddr"\s*:\s*\{[^}]*?"UrlList"\s*:\s*\[\s*"(https?:[^"]+)""""),
+            Regex(""""playAddr"\s*:\s*\{[^}]*?"urlList"\s*:\s*\[\s*"(https?:[^"]+)"""")
+        )
+        for (pat in videoPatterns) {
+            val match = pat.find(jsonText)
+            if (match != null) {
+                val videoUrl = unescapeJsonString(match.groupValues[1])
+                if (videoUrl.startsWith("http")) {
+                    return ExtractedVideo(
+                        sourceUrl = sourceUrl,
                         downloadUrl = videoUrl,
                         title = sanitizeTitle(title),
                         headers = dlHeaders,
                         platform = VideoPlatform.TIKTOK,
                         engineUsed = "On-Device TikTok Web",
-                        formats = buildDefaultFormats(videoUrl, videoUrl, null, dlHeaders, MediaType.VIDEO)
+                        mediaType = MediaType.VIDEO,
+                        formats = buildDefaultFormats(videoUrl, videoUrl, null, dlHeaders, MediaType.VIDEO, musicUrl)
                     )
                 }
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "TikTok web rehydration failed: ${e.message}")
+        }
+
+        // 2. Kiểm tra Photo Story / Slideshow (imagePost.images[].imageURL.urlList)
+        val imagePostIdx = jsonText.indexOf("\"imagePost\"")
+        if (imagePostIdx >= 0) {
+            val slice = jsonText.substring(imagePostIdx, (imagePostIdx + 30000).coerceAtMost(jsonText.length))
+            val imgMatches = Regex(""""urlList"\s*:\s*\[\s*"(https?:[^"]+)"""").findAll(slice)
+            val photoItems = imgMatches.mapNotNull { m ->
+                val u = unescapeJsonString(m.groupValues[1])
+                if (u.startsWith("http") && !u.endsWith(".mp3")) u else null
+            }.distinct().mapIndexed { idx, imgUrl ->
+                ExtractedMediaItem(
+                    url = imgUrl,
+                    mediaType = MediaType.IMAGE,
+                    ext = "jpg",
+                    titleSuffix = "Story_${idx + 1}",
+                    headers = dlHeaders
+                )
+            }.toList()
+
+            if (photoItems.isNotEmpty()) {
+                val formats = if (musicUrl != null) {
+                    listOf(
+                        VideoFormatOption(
+                            id = "audio_mp3",
+                            label = "🎵 Nhạc nền Story (MP3)",
+                            qualityBadge = "MP3",
+                            downloadUrl = musicUrl,
+                            mediaType = MediaType.AUDIO,
+                            ext = "mp3",
+                            headers = dlHeaders
+                        )
+                    )
+                } else emptyList()
+                return ExtractedVideo(
+                    sourceUrl = sourceUrl,
+                    downloadUrl = photoItems.first().url,
+                    title = sanitizeTitle(title),
+                    thumbnailUrl = photoItems.first().url,
+                    headers = dlHeaders,
+                    platform = VideoPlatform.TIKTOK,
+                    engineUsed = "On-Device TikTok Web Story (${photoItems.size} ảnh)",
+                    mediaType = MediaType.IMAGE,
+                    formats = formats,
+                    mediaItems = photoItems
+                )
+            }
         }
 
         return null
@@ -1647,19 +1932,28 @@ object DirectVideoExtractor {
                     override fun onLoadResource(view: WebView?, resUrl: String?) {
                         super.onLoadResource(view, resUrl)
                         val u = resUrl.orEmpty()
-                        if (!completed && u.contains(".mp4") && (u.contains("fbcdn.net") || u.contains("cdninstagram.com"))) {
+                        val isFbIgMp4 = u.contains(".mp4") && (u.contains("fbcdn.net") || u.contains("cdninstagram.com"))
+                        val isTikTokVideo = platform == VideoPlatform.TIKTOK &&
+                            (u.contains("tiktokcdn.com") || u.contains("tiktokv.com") || u.contains("byteoversea.com") || u.contains("ibytedtos.com") || u.contains("muscdn.com")) &&
+                            (u.contains("/video/tos/") || u.contains("mime_type=video_mp4") || u.contains(".mp4"))
+                        if (!completed && (isFbIgMp4 || isTikTokVideo)) {
                             val cleanMp4 = u.replace("&bytestart=", "&_ign_bs=").replace(Regex("""&bytestart=\d+"""), "")
                                 .replace(Regex("""&byteend=\d+"""), "")
+                            val mergedHeaders = dlHeaders.toMutableMap()
+                            if (platform == VideoPlatform.TIKTOK) {
+                                val wvCookie = runCatching { CookieManager.getInstance().getCookie("https://www.tiktok.com") }.getOrNull()
+                                if (!wvCookie.isNullOrBlank()) mergedHeaders["Cookie"] = wvCookie
+                            }
                             finish(
                                 ExtractedVideo(
                                     sourceUrl = storyUrl,
                                     downloadUrl = cleanMp4,
                                     title = "${platform.displayName}_Story_${System.currentTimeMillis() / 1000}",
-                                    headers = dlHeaders,
+                                    headers = mergedHeaders,
                                     platform = platform,
                                     engineUsed = "WebView Story Direct",
                                     mediaType = MediaType.VIDEO,
-                                    formats = buildDefaultFormats(cleanMp4, cleanMp4, null, dlHeaders, MediaType.VIDEO)
+                                    formats = buildDefaultFormats(cleanMp4, cleanMp4, null, mergedHeaders, MediaType.VIDEO)
                                 )
                             )
                         }
@@ -1673,11 +1967,15 @@ object DirectVideoExtractor {
                                 (function() {
                                     var v = document.querySelector('video');
                                     if (v && v.src && v.src.indexOf('http') === 0) return 'VIDEO:' + v.src;
+                                    var srcEl = document.querySelector('video source');
+                                    if (srcEl && srcEl.src && srcEl.src.indexOf('http') === 0) return 'VIDEO:' + srcEl.src;
                                     var html = document.documentElement.innerHTML;
                                     var m = html.match(/"playable_url_quality_hd"\s*:\s*"([^"]+)"/) ||
                                             html.match(/"browser_native_hd_url"\s*:\s*"([^"]+)"/) ||
                                             html.match(/"playable_url"\s*:\s*"([^"]+)"/) ||
-                                            html.match(/"video_versions"\s*:\s*\[\{[^}]*"url"\s*:\s*"([^"]+)"/);
+                                            html.match(/"video_versions"\s*:\s*\[\{[^}]*"url"\s*:\s*"([^"]+)"/) ||
+                                            html.match(/"playAddr"\s*:\s*"(https?:[^"]+)"/) ||
+                                            html.match(/"PlayAddr"\s*:\s*\{[^}]*?"UrlList"\s*:\s*\[\s*"(https?:[^"]+)"/);
                                     if (m && m[1]) return 'VIDEO:' + m[1];
                                     var imgs = Array.from(document.querySelectorAll('img')).filter(function(i) {
                                         return i.naturalWidth >= 400 && i.src && i.src.indexOf('http') === 0;
@@ -1688,6 +1986,11 @@ object DirectVideoExtractor {
                             """.trimIndent()
                             webView.evaluateJavascript(js) { rawResult ->
                                 val unquoted = rawResult?.trim('"')?.let { unescapeJsonString(it) }.orEmpty()
+                                val mergedHeaders = dlHeaders.toMutableMap()
+                                if (platform == VideoPlatform.TIKTOK) {
+                                    val wvCookie = runCatching { CookieManager.getInstance().getCookie("https://www.tiktok.com") }.getOrNull()
+                                    if (!wvCookie.isNullOrBlank()) mergedHeaders["Cookie"] = wvCookie
+                                }
                                 when {
                                     unquoted.startsWith("VIDEO:") -> {
                                         val vUrl = decodeHtmlEntities(unquoted.removePrefix("VIDEO:"))
@@ -1697,11 +2000,11 @@ object DirectVideoExtractor {
                                                     sourceUrl = storyUrl,
                                                     downloadUrl = vUrl,
                                                     title = "${platform.displayName}_Story_${System.currentTimeMillis() / 1000}",
-                                                    headers = dlHeaders,
+                                                    headers = mergedHeaders,
                                                     platform = platform,
                                                     engineUsed = "WebView Story Direct",
                                                     mediaType = MediaType.VIDEO,
-                                                    formats = buildDefaultFormats(vUrl, vUrl, null, dlHeaders, MediaType.VIDEO)
+                                                    formats = buildDefaultFormats(vUrl, vUrl, null, mergedHeaders, MediaType.VIDEO)
                                                 )
                                             )
                                         } else finish(null)
@@ -1714,7 +2017,7 @@ object DirectVideoExtractor {
                                                 mediaType = MediaType.IMAGE,
                                                 ext = "jpg",
                                                 titleSuffix = "Story_1",
-                                                headers = dlHeaders
+                                                headers = mergedHeaders
                                             )
                                             finish(
                                                 ExtractedVideo(
@@ -1722,7 +2025,7 @@ object DirectVideoExtractor {
                                                     downloadUrl = imgUrl,
                                                     title = "${platform.displayName}_Story_${System.currentTimeMillis() / 1000}",
                                                     thumbnailUrl = imgUrl,
-                                                    headers = dlHeaders,
+                                                    headers = mergedHeaders,
                                                     platform = platform,
                                                     engineUsed = "WebView Story Photo",
                                                     mediaType = MediaType.IMAGE,

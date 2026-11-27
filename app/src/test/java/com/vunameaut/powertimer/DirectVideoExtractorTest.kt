@@ -72,7 +72,7 @@ class DirectVideoExtractorTest {
     }
 
     @Test
-    fun testTikTokDirectExtractionAndMultiFormat() {
+    fun testTikTokDirectExtractionAndMultiFormat() = runBlocking {
         val res = DirectVideoExtractor.extractTikTokDirect("https://www.tiktok.com/@tiktok/video/7106594312292453675")
         assertNotNull("TikTok direct extraction should succeed", res)
         assertTrue("TikTok should provide multiple formats (HD/SD/MP3)", res!!.formats.size >= 2)
